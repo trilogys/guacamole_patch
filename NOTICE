@@ -1,0 +1,11 @@
+Apache Guacamole
+Copyright 2020 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (https://www.apache.org/).
+
+Downstream modification notice:
+The files identified by the included unified diff are modified by this
+unofficial Apache Guacamole 1.6.0 input-method tab-switch patch package.
+This package is not an official Apache Software Foundation release and is not
+endorsed by the Apache Software Foundation.

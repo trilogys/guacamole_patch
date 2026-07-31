@@ -1,0 +1,3 @@
+services:
+  guacamole:
+    image: local/guacamole:1.6.0-inputfix5

@@ -40,6 +40,8 @@ def main() -> int:
     require(text_input, "event.preventDefault();", "文本模式声明拥有恢复焦点")
     require(text_input, "target.focus();", "文本模式重新聚焦可见 textarea")
     require(text_input, "target.blur();", "text input native IME context reset")
+    require(text_input, "focusTextInputTarget", "text input trusted-gesture focus restore")
+    require(text_input, "if (immediate)", "text input synchronous trusted-gesture path")
     require(text_input, "focusedRect", "延迟恢复时保护用户刚选中的可见控件")
     require(text_input, "removeEventListener", "销毁时清理文本输入监听器")
 
@@ -54,12 +56,20 @@ def main() -> int:
         ("REMOTE_MODIFIER_KEYSYMS", "显式释放远端修饰键"),
         ("keyboard.reset();", "重置本地按键状态"),
         ("sink.focus();", "重新聚焦隐藏输入捕获器"),
-    ("sinkElement.blur();", "raw input native IME context reset"),
+        ("sinkElement.blur();", "raw input native IME context reset"),
+        ("sinkElement.focus();", "raw input synchronous trusted-gesture restore"),
+        ("keyboardRestorePendingUserGesture", "long-suspension trusted-gesture marker"),
+        ("restoreRemoteKeyboardInputNow", "shared synchronous/deferred restore core"),
+        ("keyboardUserGesture", "first pointer gesture restore"),
+        ("'pointerdown'", "trusted pointer listener"),
+        ("'pageshow'", "page cache restore listener"),
+        ("'freeze'", "page lifecycle freeze listener"),
+        ("'resume'", "page lifecycle resume listener"),
         ("guacKeyboardFocusRequested", "恢复 ManagedClient 焦点"),
         ("guacInputFocusRestoreRequested", "协调文本/原始键盘焦点所有权"),
         ("inputFocusEvent.defaultPrevented", "文本模式可阻止隐藏输入框抢焦点"),
         ("querySelector('.text-input .target')", "文本输入目标不被误判为本地表单"),
-        ("focused.isContentEditable", "保护本地可编辑控件焦点"),
+        ("element.isContentEditable", "保护本地可编辑控件焦点"),
         ("$document[0].hasFocus()", "避免后台窗口错误恢复焦点"),
     ]:
         require(index, needle, label)

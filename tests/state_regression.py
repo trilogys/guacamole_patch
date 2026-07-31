@@ -68,6 +68,9 @@ class RemoteKeyboardState:
         self.pressed = {0xFFE1, 0xFFE3}
         self.remote_released: list[int] = []
         self.restore_queued = False
+        self.restore_pending_user_gesture = False
+        self.native_context_stale = False
+        self.synchronous_restores = 0
 
     def reset(self) -> None:
         self.remote_released.extend(self.pressed)
@@ -90,26 +93,60 @@ class RemoteKeyboardState:
         if not self.restore_queued:
             return
         self.restore_queued = False
+        self.perform_restore()
+
+    def perform_restore(
+        self,
+        *,
+        user_initiated: bool = False,
+        ignore_existing_local_focus: bool = False,
+    ) -> bool:
         if (
             self.hidden
             or not self.document_focused
             or not self.ready
             or not self.active_tunnel
-            or self.visible_local_input
+            or (self.visible_local_input and not ignore_existing_local_focus)
         ):
-            return
+            return False
         self.client_focused = True
         self.reset()
         self.remote_released.extend(MODIFIERS)
+        native_focus_restored = user_initiated or not self.native_context_stale
         if self.text_input_target_active:
-            self.text_target_focused = True
+            self.text_target_focused = native_focus_restored
         else:
-            self.sink_focused = True
+            self.sink_focused = native_focus_restored
+        if user_initiated:
+            self.native_context_stale = False
+            self.restore_pending_user_gesture = False
+            self.synchronous_restores += 1
+        return True
 
     def hide(self) -> None:
         self.hidden = True
         self.restore_queued = False
+        self.restore_pending_user_gesture = True
         self.reset()
+
+    def freeze(self) -> None:
+        self.hide()
+        self.native_context_stale = True
+
+    def show(self) -> None:
+        self.hidden = False
+
+    def pointerdown(self, *, local_control: bool = False) -> bool:
+        if (
+            not self.restore_pending_user_gesture
+            or self.hidden
+            or local_control
+        ):
+            return False
+        return self.perform_restore(
+            user_initiated=True,
+            ignore_existing_local_focus=True,
+        )
 
 
 def main() -> None:
@@ -182,6 +219,32 @@ def main() -> None:
     cancelled.hide()
     cancelled.execute_restore()
     assert cancelled.sink_focused is False
+
+    # A long browser freeze may invalidate Chromium's native editing context.
+    # Deferred focus is insufficient, but the first trusted pointer gesture
+    # must synchronously rebuild the context without requiring a page refresh.
+    frozen = RemoteKeyboardState()
+    frozen.freeze()
+    frozen.show()
+    assert frozen.queue_restore() is True
+    frozen.execute_restore()
+    assert frozen.client_focused is True
+    assert frozen.sink_focused is False
+    assert frozen.restore_pending_user_gesture is True
+    assert frozen.pointerdown() is True
+    assert frozen.sink_focused is True
+    assert frozen.native_context_stale is False
+    assert frozen.synchronous_restores == 1
+
+    # Clicking a visible local control must not consume the pending trusted
+    # gesture; a later click on the remote display can still recover input.
+    frozen_local = RemoteKeyboardState()
+    frozen_local.freeze()
+    frozen_local.show()
+    assert frozen_local.pointerdown(local_control=True) is False
+    assert frozen_local.restore_pending_user_gesture is True
+    assert frozen_local.pointerdown() is True
+    assert frozen_local.sink_focused is True
 
     print("输入法、焦点所有权、修饰键和竞态状态回归测试通过。")
 

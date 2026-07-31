@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -53,7 +55,16 @@ def main() -> int:
         "processTextInput",
         "compositionend",
         "visibilitychange",
-        "focused.isContentEditable",
+        "keyboardRestorePendingUserGesture",
+        "restoreRemoteKeyboardInputNow",
+        "keyboardUserGesture",
+        "'pointerdown'",
+        "'pageshow'",
+        "'freeze'",
+        "'resume'",
+        "sinkElement.focus();",
+        "if (immediate)",
+        "element.isContentEditable",
         "tagName === 'textarea'",
         "tagName === 'button'",
         "tagName === 'a'",
@@ -84,16 +95,24 @@ def main() -> int:
             "不得无条件拉取浮动基础镜像")
 
     compose = (root / "docker-compose.override.yml").read_text(encoding="utf-8")
-    require("local/guacamole:1.6.0-inputfix5" in compose,
-            "Compose 覆盖文件未使用 v5 本地镜像标签")
+    require("local/guacamole:1.6.0-inputfix6" in compose,
+            "Compose 覆盖文件未使用 v6 本地镜像标签")
 
     metadata_path = root / "RELEASE_METADATA.json"
     require(metadata_path.exists(), "缺少 RELEASE_METADATA.json")
-    metadata = metadata_path.read_text(encoding="utf-8")
-    require('"release_status": "controlled-deployment-candidate"' in metadata,
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    require(metadata["release_status"] == "controlled-deployment-candidate",
             "发布状态必须明确为受控部署候选版")
-    require('"end_to_end_rdp_validation": false' in metadata,
+    require(metadata["end_to_end_rdp_validation"] is False,
             "不得把尚未完成的端到端验证标记为已完成")
+    require(metadata["package_version"] == "1.6.0-inputfix6",
+            "发布元数据版本必须为 inputfix6")
+    require(metadata["default_image"] == "local/guacamole:1.6.0-inputfix6",
+            "发布元数据默认镜像必须为 inputfix6")
+    require(
+        metadata["patch_sha256"] == hashlib.sha256(patch_path.read_bytes()).hexdigest(),
+        "发布元数据中的补丁 SHA-256 与实际补丁不一致",
+    )
 
     license_path = root / "LICENSE"
     notice_path = root / "NOTICE"

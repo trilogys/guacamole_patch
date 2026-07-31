@@ -1,159 +1,7 @@
-diff --git a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js b/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js
---- a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js
-+++ b/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js
-@@ -30,8 +30,10 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
-         scope: {},
- 
-         templateUrl: 'app/textInput/templates/guacTextInput.html',
--        controller: ['$scope', '$rootScope', '$element', '$timeout',
--            function guacTextInput($scope, $rootScope, $element, $timeout) {
-+        controller: ['$scope', '$rootScope', '$element', '$timeout', '$window',
-+            function guacTextInput($scope, $rootScope, $element, $timeout, $window) {
-+
-+            // Downstream modification: recover IME input after browser tab changes.
- 
-             /**
-              * The number of characters to include on either side of text input
-@@ -120,6 +120,13 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
-              */
-             var target = $element.find('.target')[0];
- 
-+            /**
-+             * The browser document containing the text input target.
-+             *
-+             * @type Document
-+             */
-+            var document = $window.document;
-+
-             /**
-              * Whether the text input target currently has focus. Setting this
-              * attribute has no effect, but any bound property will be updated
-@@ -131,7 +138,9 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
- 
-             target.onfocus = function targetFocusGained() {
-                 hasFocus = true;
-+                composingText = false;
-                 resetTextInputTarget(TEXT_INPUT_PADDING);
-+                $rootScope.$broadcast('guacTextInputFocusRequested');
-             };
- 
-             target.onblur = function targetFocusLost() {
-@@ -151,7 +160,20 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
-             }, false);
- 
-             target.addEventListener("compositionend", function targetComposeEnd(e) {
-+
-                 composingText = false;
-+
-+                // Some browsers deliver the final input event before the
-+                // compositionend event. In that case the input event is ignored
-+                // while composingText is true. Process any remaining committed
-+                // text once composition has ended.
-+                $window.setTimeout(function flushCompletedComposition() {
-+                    var paddingChar = String.fromCharCode(TEXT_INPUT_PADDING_CODEPOINT);
-+                    var emptyValue = new Array(TEXT_INPUT_PADDING * 2 + 1).join(paddingChar);
-+                    if (!composingText && target.value !== emptyValue)
-+                        processTextInput();
-+                }, 0);
-+
-             }, false);
- 
-             /**
-@@ -282,7 +304,14 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
- 
-             };
- 
--            target.addEventListener("input", function(e) {
-+            /**
-+             * Processes the current contents of the text input target, sending
-+             * the corresponding text, Backspace, or Delete events remotely.
-+             *
-+             * @param {InputEvent} [e]
-+             *     The browser input event that triggered processing, if any.
-+             */
-+            var processTextInput = function processTextInput(e) {
- 
-                 // Ignore input events during text composition
-                 if (composingText)
-@@ -313,9 +342,72 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
- 
-                 // Reset content
-                 resetTextInputTarget(TEXT_INPUT_PADDING);
--                e.preventDefault();
-+                if (e)
-+                    e.preventDefault();
-+
-+            };
-+
-+            target.addEventListener("input", processTextInput, false);
-+
-+            /**
-+             * Clears composition state after the browser page loses or regains
-+             * visibility/focus. A browser may omit compositionend while a tab
-+             * is backgrounded, otherwise leaving composingText permanently true.
-+             */
-+            var resetAfterBrowserFocusChange = function resetAfterBrowserFocusChange() {
-+
-+                composingText = false;
-+                resetTextInputTarget(TEXT_INPUT_PADDING);
-+
-+                // Ensure synthetic text, Backspace, and Delete events are routed
-+                // to an active Guacamole client after returning to this tab.
-+                if (!document.hidden)
-+                    $rootScope.$broadcast('guacTextInputFocusRequested');
-+
-+            };
-+
-+            document.addEventListener("visibilitychange", resetAfterBrowserFocusChange, false);
-+            $window.addEventListener("focus", resetAfterBrowserFocusChange, false);
-+
-+            // If global keyboard restoration occurs while text-input mode is
-+            // active, keep focus on this visible textarea instead of allowing
-+            // the hidden raw-keyboard InputSink to steal it.
-+            $scope.$on('guacInputFocusRestoreRequested', function restoreTextInputFocus(event) {
-+
-+                event.preventDefault();
-+                composingText = false;
-+                resetTextInputTarget(TEXT_INPUT_PADDING);
-+                $rootScope.$broadcast('guacTextInputFocusRequested');
-+
-+                $window.setTimeout(function deferTextInputFocus() {
-+
-+                    if (document.hidden)
-+                        return;
-+
-+                    // Do not steal focus if the user has already selected a
-+                    // visible local Guacamole form control after returning.
-+                    var focused = document.activeElement;
-+                    var focusedRect = focused && focused.getBoundingClientRect
-+                            ? focused.getBoundingClientRect() : null;
-+                    if (!focused || focused === document.body || focused === target
-+                            || !focusedRect || !focusedRect.width || !focusedRect.height) {
-+                        // Recreate the native editing context if Chromium kept this
-+                        // textarea active while suspending its IME session.
-+                        if (focused === target)
-+                            target.blur();
-+                        target.focus();
-+                    }
-+
-+                }, 0);
-+
-+            });
-+
-+            // Prevent stale handlers after navigating away from the client view.
-+            $scope.$on('$destroy', function textInputDestroyed() {
-+                document.removeEventListener("visibilitychange", resetAfterBrowserFocusChange, false);
-+                $window.removeEventListener("focus", resetAfterBrowserFocusChange, false);
-+            });
- 
--            }, false);
- 
-             // Do not allow event target contents to be selected during input
-             target.addEventListener("selectstart", function(e) {
 diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 --- a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 +++ b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
-@@ -163,6 +163,22 @@ angular.module('client').directive('guacTiledClients', [function guacTiledClients
+@@ -162,6 +162,22 @@ angular.module('client').directive('guacTiledClients', [function guacTiledClient
              };
          };
  
@@ -179,7 +27,15 @@ diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClie
 diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 --- a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 +++ b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
-@@ -251,6 +251,141 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -221,6 +221,7 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+ 
+     // Release all keys when window loses focus
+     $window.onblur = function () {
++        keyboardRestorePendingUserGesture = true;
+         keyboard.reset();
+     };
+ 
+@@ -250,6 +251,231 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
  
      };
  
@@ -216,35 +72,102 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +    var keyboardRestoreTimer = null;
 +
 +    /**
-+     * Returns whether focus intentionally belongs to a visible local form field.
++     * Whether a background/freeze event requires one final synchronous restore
++     * from the next trusted user gesture.
++     *
++     * @type {boolean}
++     */
++    var keyboardRestorePendingUserGesture = false;
++
++    /**
++     * Returns whether the given element is within a visible local form field.
 +     * In that case the hidden Guacamole input sink must not steal focus.
++     *
++     * @param {Element} element
++     *     The element to test.
++     *
++     * @returns {boolean}
++     */
++    var isVisibleLocalInput = function isVisibleLocalInput(element) {
++
++        var textInputTarget = $document[0].querySelector('.text-input .target');
++        while (element && element !== $document[0].body) {
++
++            if (element === sink.getElement() || element === textInputTarget)
++                return false;
++
++            var tagName = element.tagName ? element.tagName.toLowerCase() : '';
++            var isLocalInput = tagName === 'input'
++                    || tagName === 'textarea'
++                    || tagName === 'select'
++                    || tagName === 'button'
++                    || tagName === 'a'
++                    || element.isContentEditable;
++
++            if (isLocalInput) {
++                var rect = element.getBoundingClientRect();
++                return rect.width > 0 && rect.height > 0
++                        && rect.right > 0 && rect.bottom > 0;
++            }
++
++            element = element.parentNode;
++
++        }
++
++        return false;
++
++    };
++
++    /**
++     * Returns whether focus intentionally belongs to a visible local form field.
 +     *
 +     * @returns {boolean}
 +     */
 +    var hasVisibleLocalInputFocus = function hasVisibleLocalInputFocus() {
++        return isVisibleLocalInput($document[0].activeElement);
++    };
 +
-+        var focused = $document[0].activeElement;
-+        if (!focused || focused === $document[0].body || focused === sink.getElement())
++    /**
++     * Immediately restores keyboard forwarding. Synchronous restoration is used
++     * only for the first trusted pointer gesture after a background/freeze.
++     *
++     * @param {boolean} userInitiated
++     *     Whether this invocation is running within a trusted user gesture.
++     *
++     * @param {boolean} ignoreExistingLocalFocus
++     *     Whether focus held by a previous local form control should be ignored.
++     *
++     * @returns {boolean}
++     *     true if restoration was performed, false otherwise.
++     */
++    var restoreRemoteKeyboardInputNow = function restoreRemoteKeyboardInputNow(
++            userInitiated, ignoreExistingLocalFocus) {
++
++        if ($document[0].hidden || !$document[0].hasFocus()
++                || $scope.applicationState !== ApplicationState.READY
++                || !hasActiveTunnel()
++                || (!ignoreExistingLocalFocus && hasVisibleLocalInputFocus()))
 +            return false;
 +
-+        // The visible Guacamole text-input target is a remote-input surface,
-+        // not a local form field. It must participate in restoration.
-+        if (focused === $document[0].querySelector('.text-input .target'))
-+            return false;
++        $scope.$broadcast('guacKeyboardFocusRequested');
 +
-+        var tagName = focused.tagName ? focused.tagName.toLowerCase() : '';
-+        var isLocalInput = tagName === 'input'
-+                || tagName === 'textarea'
-+                || tagName === 'select'
-+                || tagName === 'button'
-+                || tagName === 'a'
-+                || focused.isContentEditable;
++        keyboard.reset();
++        angular.forEach(REMOTE_MODIFIER_KEYSYMS, function releaseModifier(keysym) {
++            $scope.$broadcast('guacSyntheticKeyup', keysym);
++        });
 +
-+        if (!isLocalInput)
-+            return false;
++        var inputFocusEvent = $scope.$broadcast(
++                'guacInputFocusRestoreRequested', userInitiated);
++        if (!inputFocusEvent.defaultPrevented) {
++            var sinkElement = sink.getElement();
++            sinkElement.blur();
++            if (userInitiated)
++                sinkElement.focus();
++            else
++                sink.focus();
++        }
 +
-+        var rect = focused.getBoundingClientRect();
-+        return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0;
++        return true;
 +
 +    };
 +
@@ -271,29 +194,7 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +                return;
 +
 +            $scope.$evalAsync(function restoreKeyboardWithinDigest() {
-+
-+                // Focus assignment is synchronous and must happen before keyup
-+                // events are sent, otherwise guacClient will discard them.
-+                $scope.$broadcast('guacKeyboardFocusRequested');
-+
-+                // Release all keys tracked by Guacamole, then explicitly release
-+                // modifiers which may remain pressed only on the remote side.
-+                keyboard.reset();
-+                angular.forEach(REMOTE_MODIFIER_KEYSYMS, function releaseModifier(keysym) {
-+                    $scope.$broadcast('guacSyntheticKeyup', keysym);
-+                });
-+
-+                // Text-input mode owns a visible textarea. Allow it to retain
-+                // focus; otherwise restore the hidden raw-keyboard InputSink.
-+                var inputFocusEvent = $scope.$broadcast('guacInputFocusRestoreRequested');
-+                if (!inputFocusEvent.defaultPrevented) {
-+                    // Recreate the native editing context. Calling focus() alone is a
-+                    // no-op if Chromium left the hidden field active while suspended.
-+                    var sinkElement = sink.getElement();
-+                    sinkElement.blur();
-+                    sink.focus();
-+                }
-+
++                restoreRemoteKeyboardInputNow(false, false);
 +            });
 +
 +        }, 0);
@@ -305,6 +206,7 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +    var keyboardVisibilityChanged = function keyboardVisibilityChanged() {
 +
 +        if ($document[0].hidden) {
++            keyboardRestorePendingUserGesture = true;
 +            if (keyboardRestoreTimer !== null) {
 +                $window.clearTimeout(keyboardRestoreTimer);
 +                keyboardRestoreTimer = null;
@@ -316,17 +218,58 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +
 +    };
 +
++    /**
++     * Marks keyboard input as needing a trusted-gesture restore after the page
++     * lifecycle freezes or resumes.
++     */
++    var keyboardPageLifecycleChanged = function keyboardPageLifecycleChanged(e) {
++
++        keyboardRestorePendingUserGesture = true;
++
++        if (e.type === 'freeze') {
++            if (keyboardRestoreTimer !== null) {
++                $window.clearTimeout(keyboardRestoreTimer);
++                keyboardRestoreTimer = null;
++            }
++            keyboard.reset();
++        }
++        else
++            restoreRemoteKeyboardInput();
++
++    };
++
++    /**
++     * Performs the final restoration synchronously on the first pointer gesture
++     * after the page has returned from the background.
++     */
++    var keyboardUserGesture = function keyboardUserGesture(e) {
++
++        if (!keyboardRestorePendingUserGesture || $document[0].hidden
++                || isVisibleLocalInput(e.target))
++            return;
++
++        if (keyboardRestoreTimer !== null) {
++            $window.clearTimeout(keyboardRestoreTimer);
++            keyboardRestoreTimer = null;
++        }
++
++        if (restoreRemoteKeyboardInputNow(true, true))
++            keyboardRestorePendingUserGesture = false;
++
++    };
++
 +    $document[0].addEventListener('visibilitychange', keyboardVisibilityChanged, true);
++    $document[0].addEventListener('freeze', keyboardPageLifecycleChanged, true);
++    $document[0].addEventListener('resume', keyboardPageLifecycleChanged, true);
++    $document[0].addEventListener('pointerdown', keyboardUserGesture, true);
++    $window.addEventListener('pageshow', keyboardPageLifecycleChanged, true);
 +
      // If we're logged in and not connected to anything, periodically check
      // whether the current session is still valid. If the session has expired,
      // refresh the auth state to reshow the login screen (rather than wait for
-@@ -276,10 +401,13 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
-     $window.addEventListener('load',  clipboardService.resyncClipboard, true);
-     $window.addEventListener('copy',  clipboardService.resyncClipboard);
+@@ -278,9 +504,12 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
      $window.addEventListener('cut',   clipboardService.resyncClipboard);
--    $window.addEventListener('focus', function focusGained(e) {
-+    $window.addEventListener('focus', function focusGained(e) {
+     $window.addEventListener('focus', function focusGained(e) {
  
 -        // Only recheck clipboard if it's the window itself that gained focus
 -        if (e.target === $window)
@@ -339,3 +282,168 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +        restoreRemoteKeyboardInput();
  
      }, true);
+ 
+diff --git a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js b/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js
+--- a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js
++++ b/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js
+@@ -28,8 +28,10 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
+         scope: {},
+ 
+         templateUrl: 'app/textInput/templates/guacTextInput.html',
+-        controller: ['$scope', '$rootScope', '$element', '$timeout',
+-            function guacTextInput($scope, $rootScope, $element, $timeout) {
++        controller: ['$scope', '$rootScope', '$element', '$timeout', '$window',
++            function guacTextInput($scope, $rootScope, $element, $timeout, $window) {
++
++            // Downstream modification: recover IME input after browser tab changes.
+ 
+             /**
+              * The number of characters to include on either side of text input
+@@ -118,6 +120,13 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
+              */
+             var target = $element.find('.target')[0];
+ 
++            /**
++             * The browser document containing the text input target.
++             *
++             * @type Document
++             */
++            var document = $window.document;
++
+             /**
+              * Whether the text input target currently has focus. Setting this
+              * attribute has no effect, but any bound property will be updated
+@@ -129,7 +138,9 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
+ 
+             target.onfocus = function targetFocusGained() {
+                 hasFocus = true;
++                composingText = false;
+                 resetTextInputTarget(TEXT_INPUT_PADDING);
++                $rootScope.$broadcast('guacTextInputFocusRequested');
+             };
+ 
+             target.onblur = function targetFocusLost() {
+@@ -149,7 +160,20 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
+             }, false);
+ 
+             target.addEventListener("compositionend", function targetComposeEnd(e) {
++
+                 composingText = false;
++
++                // Some browsers deliver the final input event before the
++                // compositionend event. In that case the input event is ignored
++                // while composingText is true. Process any remaining committed
++                // text once composition has ended.
++                $window.setTimeout(function flushCompletedComposition() {
++                    var paddingChar = String.fromCharCode(TEXT_INPUT_PADDING_CODEPOINT);
++                    var emptyValue = new Array(TEXT_INPUT_PADDING * 2 + 1).join(paddingChar);
++                    if (!composingText && target.value !== emptyValue)
++                        processTextInput();
++                }, 0);
++
+             }, false);
+ 
+             /**
+@@ -281,7 +305,14 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
+ 
+             };
+ 
+-            target.addEventListener("input", function(e) {
++            /**
++             * Processes the current contents of the text input target, sending
++             * the corresponding text, Backspace, or Delete events remotely.
++             *
++             * @param {InputEvent} [e]
++             *     The browser input event that triggered processing, if any.
++             */
++            var processTextInput = function processTextInput(e) {
+ 
+                 // Ignore input events during text composition
+                 if (composingText)
+@@ -311,9 +342,84 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
+ 
+                 // Reset content
+                 resetTextInputTarget(TEXT_INPUT_PADDING);
+-                e.preventDefault();
++                if (e)
++                    e.preventDefault();
++
++            };
++
++            target.addEventListener("input", processTextInput, false);
++
++            /**
++             * Clears composition state after the browser page loses or regains
++             * visibility/focus. A browser may omit compositionend while a tab
++             * is backgrounded, otherwise leaving composingText permanently true.
++             */
++            var resetAfterBrowserFocusChange = function resetAfterBrowserFocusChange() {
++
++                composingText = false;
++                resetTextInputTarget(TEXT_INPUT_PADDING);
++
++                // Ensure synthetic text, Backspace, and Delete events are routed
++                // to an active Guacamole client after returning to this tab.
++                if (!document.hidden)
++                    $rootScope.$broadcast('guacTextInputFocusRequested');
++
++            };
++
++            document.addEventListener("visibilitychange", resetAfterBrowserFocusChange, false);
++            $window.addEventListener("focus", resetAfterBrowserFocusChange, false);
++
++            /**
++             * Restores focus to the visible text-input target without stealing
++             * focus from a local Guacamole form control.
++             */
++            var focusTextInputTarget = function focusTextInputTarget() {
++
++                if (document.hidden)
++                    return;
++
++                var focused = document.activeElement;
++                var focusedRect = focused && focused.getBoundingClientRect
++                        ? focused.getBoundingClientRect() : null;
++                if (!focused || focused === document.body || focused === target
++                        || !focusedRect || !focusedRect.width || !focusedRect.height) {
++
++                    // Recreate the native editing context if Chromium kept this
++                    // textarea active while suspending its IME session.
++                    if (focused === target)
++                        target.blur();
++                    target.focus();
++
++                }
++
++            };
++
++            // If global keyboard restoration occurs while text-input mode is
++            // active, keep focus on this visible textarea instead of allowing
++            // the hidden raw-keyboard InputSink to steal it.
++            $scope.$on('guacInputFocusRestoreRequested', function restoreTextInputFocus(event, immediate) {
++
++                event.preventDefault();
++                composingText = false;
++                resetTextInputTarget(TEXT_INPUT_PADDING);
++                $rootScope.$broadcast('guacTextInputFocusRequested');
++
++                // A pointerdown-triggered restoration must remain synchronous so
++                // Chromium associates the new editing context with that trusted
++                // user gesture. Other restoration events remain deferred.
++                if (immediate)
++                    focusTextInputTarget();
++                else
++                    $window.setTimeout(focusTextInputTarget, 0);
++
++            });
++
++            // Prevent stale handlers after navigating away from the client view.
++            $scope.$on('$destroy', function textInputDestroyed() {
++                document.removeEventListener("visibilitychange", resetAfterBrowserFocusChange, false);
++                $window.removeEventListener("focus", resetAfterBrowserFocusChange, false);
++            });
+ 
+-            }, false);
+ 
+             // Do not allow event target contents to be selected during input
+             target.addEventListener("selectstart", function(e) {

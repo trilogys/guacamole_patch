@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0-inputfix6
+
+- Recover native IME contexts after long browser freezes through the first trusted pointer gesture.
+- Listen for page lifecycle `freeze`, `resume`, and `pageshow` events in addition to focus and visibility changes.
+- Restore text-input and raw-keyboard modes synchronously when user activation is required by Chromium.
+- Verify that release metadata contains the actual distributed patch SHA-256.
+
 ## 1.6.0-inputfix5
 - Recreate Chromium native IME contexts with blur/refocus after returning to the tab.
 

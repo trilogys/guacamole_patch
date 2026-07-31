@@ -85,7 +85,7 @@ def main() -> int:
 
     compose = (root / "docker-compose.override.yml").read_text(encoding="utf-8")
     require("local/guacamole:1.6.0-inputfix5" in compose,
-            "Compose 覆盖文件未使用 v4 本地镜像标签")
+            "Compose 覆盖文件未使用 v5 本地镜像标签")
 
     metadata_path = root / "RELEASE_METADATA.json"
     require(metadata_path.exists(), "缺少 RELEASE_METADATA.json")

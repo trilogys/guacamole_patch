@@ -1,11 +1,11 @@
-# Apache Guacamole 1.6.0 输入法修复 v4
+# Apache Guacamole 1.6.0 输入法修复 v5
 
 这是针对 **Apache Guacamole 1.6.0** 的非官方下游补丁候选版，修复浏览器切换标签页后两类输入问题：
 
 1. Guacamole“文本输入”模式中，中文停留在左下角、无法进入远程输入框，或 Backspace/Delete 失效；
 2. Guacamole 输入方式为“无（None）”时，远程 Windows 微软拼音或普通键盘在切换标签页后失效。
 
-> v2 已撤回；v3 经过进一步审计后也被 v4 替代。请只使用镜像标签 `local/guacamole:1.6.0-inputfix5`。
+> v2 已撤回；v3 经过进一步审计后也被 v5 替代。请只使用镜像标签 `local/guacamole:1.6.0-inputfix5`。
 
 ## 适用模式
 
@@ -65,9 +65,9 @@ Node.js 不是必需项；存在时会额外执行修改文件的 JavaScript 语
 sudo apt-get update
 sudo apt-get install -y curl patch python3
 
-tar -xzf guacamole-ime-fix-v4-1.6.0.tar.gz
-cd guacamole-ime-fix-v4
-sha256sum -c ../guacamole-ime-fix-v4-1.6.0.tar.gz.sha256
+tar -xzf guacamole-ime-fix-v5-1.6.0.tar.gz
+cd guacamole-ime-fix-v5
+sha256sum -c ../guacamole-ime-fix-v5-1.6.0.tar.gz.sha256
 ./build.sh
 ```
 

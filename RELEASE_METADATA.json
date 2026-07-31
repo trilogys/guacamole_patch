@@ -1,11 +1,11 @@
 {
-  "package_version": "1.6.0-inputfix5",
+  "package_version": "1.6.0-inputfix7",
   "release_status": "controlled-deployment-candidate",
   "upstream_project": "Apache Guacamole",
   "upstream_version": "1.6.0",
   "upstream_source_sha256": "81f9fd5a7b4377fb0ee295d0d4fec92e9667f2aafaa3d0ed8937f535deabdee4",
-  "patch_sha256": "392bf051d6ea5ef6b1f8f43214e595a7f68991f068dabdc894e5ac4366464742",
-  "default_image": "local/guacamole:1.6.0-inputfix5",
+  "patch_sha256": "b76bac72bd98c5e70314e84c384f3feacaaff7c5535b50f05bc6637f1d037e10",
+  "default_image": "local/guacamole:1.6.0-inputfix7",
   "database_migration": false,
   "end_to_end_rdp_validation": false
 }

@@ -94,11 +94,12 @@ def main() -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("".join(content), encoding="utf-8")
 
-        # The v2 bug lived in clientController. Provide an unchanged fixture so
-        # verify_patched_source can assert that no restoration code is placed there.
+        # Older patches did not modify clientController. Provide an unchanged
+        # fixture only when it is absent from the current patch.
         client = root / "guacamole/src/main/frontend/src/app/client/controllers/clientController.js"
-        client.parent.mkdir(parents=True, exist_ok=True)
-        client.write_text("// unchanged clientController fixture\n", encoding="utf-8")
+        if not client.exists():
+            client.parent.mkdir(parents=True, exist_ok=True)
+            client.write_text("// unchanged clientController fixture\n", encoding="utf-8")
 
         patch_bytes = patch_path.read_bytes()
         subprocess.run(

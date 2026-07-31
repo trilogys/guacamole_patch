@@ -8,9 +8,13 @@ from pathlib import Path
 
 
 TARGETS = [
+    "guacamole/src/main/frontend/src/app/client/controllers/clientController.js",
+    "guacamole/src/main/frontend/src/app/client/templates/client.html",
     "guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js",
     "guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js",
     "guacamole/src/main/frontend/src/app/index/controllers/indexController.js",
+    "guacamole/src/main/frontend/src/translations/en.json",
+    "guacamole/src/main/frontend/src/translations/zh.json",
 ]
 
 
@@ -28,8 +32,6 @@ def main() -> int:
     patch_path = root / "patches/0001-fix-ime-and-keyboard-after-tab-switch.patch"
     patch = patch_path.read_text(encoding="utf-8")
 
-    require("client/controllers/clientController.js" not in patch,
-            "远程键盘恢复不得放入缺少 keyboard/sink 的 clientController")
     require("\nindex " not in "\n" + patch,
             "正式补丁不得包含伪造的 git postimage blob 哈希")
 
@@ -51,7 +53,7 @@ def main() -> int:
         "guacInputFocusRestoreRequested",
         "inputFocusEvent.defaultPrevented",
         "querySelector('.text-input .target')",
-        "focusedRect",
+        "isVisibleLocalInput",
         "processTextInput",
         "compositionend",
         "visibilitychange",
@@ -59,11 +61,22 @@ def main() -> int:
         "restoreRemoteKeyboardInputNow",
         "keyboardUserGesture",
         "'pointerdown'",
+        "'mousedown'",
+        "'touchstart'",
+        "'click'",
+        "'keydown'",
+        "'pagehide'",
         "'pageshow'",
         "'freeze'",
         "'resume'",
         "sinkElement.focus();",
+        "sinkElement.value = '';",
         "if (immediate)",
+        "forceMenu",
+        "guacToggleMenuRequested",
+        "guacForceInputRecovery",
+        "getModifierState('AltGraph')",
+        "ACTION_RECOVER_KEYBOARD",
         "element.isContentEditable",
         "tagName === 'textarea'",
         "tagName === 'button'",
@@ -95,8 +108,8 @@ def main() -> int:
             "不得无条件拉取浮动基础镜像")
 
     compose = (root / "docker-compose.override.yml").read_text(encoding="utf-8")
-    require("local/guacamole:1.6.0-inputfix6" in compose,
-            "Compose 覆盖文件未使用 v6 本地镜像标签")
+    require("local/guacamole:1.6.0-inputfix7" in compose,
+            "Compose 覆盖文件未使用 v7 本地镜像标签")
 
     metadata_path = root / "RELEASE_METADATA.json"
     require(metadata_path.exists(), "缺少 RELEASE_METADATA.json")
@@ -105,10 +118,10 @@ def main() -> int:
             "发布状态必须明确为受控部署候选版")
     require(metadata["end_to_end_rdp_validation"] is False,
             "不得把尚未完成的端到端验证标记为已完成")
-    require(metadata["package_version"] == "1.6.0-inputfix6",
-            "发布元数据版本必须为 inputfix6")
-    require(metadata["default_image"] == "local/guacamole:1.6.0-inputfix6",
-            "发布元数据默认镜像必须为 inputfix6")
+    require(metadata["package_version"] == "1.6.0-inputfix7",
+            "发布元数据版本必须为 inputfix7")
+    require(metadata["default_image"] == "local/guacamole:1.6.0-inputfix7",
+            "发布元数据默认镜像必须为 inputfix7")
     require(
         metadata["patch_sha256"] == hashlib.sha256(patch_path.read_bytes()).hexdigest(),
         "发布元数据中的补丁 SHA-256 与实际补丁不一致",

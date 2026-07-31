@@ -1,3 +1,28 @@
+diff --git a/guacamole/src/main/frontend/src/app/client/controllers/clientController.js b/guacamole/src/main/frontend/src/app/client/controllers/clientController.js
+--- a/guacamole/src/main/frontend/src/app/client/controllers/clientController.js
++++ b/guacamole/src/main/frontend/src/app/client/controllers/clientController.js
+@@ -144,6 +144,21 @@ angular.module('client').controller('clientController', ['$scope', '$routeParams
+         $scope.menu.shown = false;
+     };
+ 
++    /**
++     * Requests immediate recovery of Guacamole keyboard and IME capture.
++     */
++    $scope.recoverKeyboardInput = function recoverKeyboardInput() {
++        $scope.$emit('guacForceInputRecovery');
++        $scope.closeMenu();
++    };
++
++    /**
++     * Toggles the Guacamole menu when requested by the global keyboard fallback.
++     */
++    $scope.$on('guacToggleMenuRequested', function toggleMenuRequested() {
++        $scope.menu.shown = !$scope.menu.shown;
++    });
++
+     /**
+      * Applies any changes to connection parameters made by the user within the
+      * Guacamole menu to the given ManagedClient. If no client is supplied,
 diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 --- a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 +++ b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
@@ -24,18 +49,35 @@ diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClie
          /**
           * @borrows ManagedClientGroup.hasMultipleClients
           */
+diff --git a/guacamole/src/main/frontend/src/app/client/templates/client.html b/guacamole/src/main/frontend/src/app/client/templates/client.html
+--- a/guacamole/src/main/frontend/src/app/client/templates/client.html
++++ b/guacamole/src/main/frontend/src/app/client/templates/client.html
+@@ -133,6 +133,12 @@
+                     <h3>{{'CLIENT.SECTION_HEADER_INPUT_METHOD' | translate}}</h3>
+                     <div class="content">
+ 
++                        <!-- Manual keyboard/IME recovery -->
++                        <div class="choice">
++                            <button class="button" ng-click="recoverKeyboardInput()">{{'CLIENT.ACTION_RECOVER_KEYBOARD' | translate}}</button>
++                            <p class="caption">{{'CLIENT.HELP_RECOVER_KEYBOARD' | translate}}</p>
++                        </div>
++
+                         <!-- No IME -->
+                         <div class="choice">
+                             <label><input id="ime-none" name="input-method" ng-change="closeMenu()" ng-model="menu.inputMethod" type="radio" value="none"> {{'CLIENT.NAME_INPUT_METHOD_NONE' | translate}}</label>
 diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 --- a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 +++ b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
-@@ -221,6 +221,7 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -221,6 +221,8 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
  
      // Release all keys when window loses focus
      $window.onblur = function () {
 +        keyboardRestorePendingUserGesture = true;
++        keyboardMenuShortcutActive = false;
          keyboard.reset();
      };
  
-@@ -250,6 +251,231 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -250,6 +252,342 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
  
      };
  
@@ -78,6 +120,24 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +     * @type {boolean}
 +     */
 +    var keyboardRestorePendingUserGesture = false;
++
++    /**
++     * Whether the native Guacamole menu shortcut is already being handled.
++     * This prevents repeated keydown events from reopening the menu.
++     *
++     * @type {boolean}
++     */
++    var keyboardMenuShortcutActive = false;
++
++    /**
++     * Cancels any queued asynchronous keyboard restoration.
++     */
++    var cancelKeyboardRestoreTimer = function cancelKeyboardRestoreTimer() {
++        if (keyboardRestoreTimer !== null) {
++            $window.clearTimeout(keyboardRestoreTimer);
++            keyboardRestoreTimer = null;
++        }
++    };
 +
 +    /**
 +     * Returns whether the given element is within a visible local form field.
@@ -128,6 +188,27 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +    };
 +
 +    /**
++     * Returns whether the given event target belongs to the remote desktop
++     * input surface, including either Guacamole input target.
++     *
++     * @param {Element} element
++     *     The element to test.
++     *
++     * @returns {boolean}
++     */
++    var isRemoteKeyboardTarget = function isRemoteKeyboardTarget(element) {
++
++        var textInputTarget = $document[0].querySelector('.text-input .target');
++        if (element === sink.getElement() || element === textInputTarget
++                || element === $document[0].body
++                || element === $document[0].documentElement)
++            return true;
++
++        return !!(element && element.closest && element.closest('.client-body'));
++
++    };
++
++    /**
 +     * Immediately restores keyboard forwarding. Synchronous restoration is used
 +     * only for the first trusted pointer gesture after a background/freeze.
 +     *
@@ -160,6 +241,7 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +                'guacInputFocusRestoreRequested', userInitiated);
 +        if (!inputFocusEvent.defaultPrevented) {
 +            var sinkElement = sink.getElement();
++            sinkElement.value = '';
 +            sinkElement.blur();
 +            if (userInitiated)
 +                sinkElement.focus();
@@ -207,10 +289,8 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +
 +        if ($document[0].hidden) {
 +            keyboardRestorePendingUserGesture = true;
-+            if (keyboardRestoreTimer !== null) {
-+                $window.clearTimeout(keyboardRestoreTimer);
-+                keyboardRestoreTimer = null;
-+            }
++            keyboardMenuShortcutActive = false;
++            cancelKeyboardRestoreTimer();
 +            keyboard.reset();
 +        }
 +        else
@@ -225,12 +305,10 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +    var keyboardPageLifecycleChanged = function keyboardPageLifecycleChanged(e) {
 +
 +        keyboardRestorePendingUserGesture = true;
++        keyboardMenuShortcutActive = false;
 +
-+        if (e.type === 'freeze') {
-+            if (keyboardRestoreTimer !== null) {
-+                $window.clearTimeout(keyboardRestoreTimer);
-+                keyboardRestoreTimer = null;
-+            }
++        if (e.type === 'freeze' || e.type === 'pagehide') {
++            cancelKeyboardRestoreTimer();
 +            keyboard.reset();
 +        }
 +        else
@@ -239,35 +317,110 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +    };
 +
 +    /**
-+     * Performs the final restoration synchronously on the first pointer gesture
-+     * after the page has returned from the background.
++     * Performs the final restoration synchronously on a trusted mouse, touch,
++     * or pointer gesture over the remote desktop after the page has returned
++     * from the background. Multiple event types are intentionally supported
++     * because the earliest event may run before the browser has restored focus.
 +     */
 +    var keyboardUserGesture = function keyboardUserGesture(e) {
 +
 +        if (!keyboardRestorePendingUserGesture || $document[0].hidden
++                || e.isTrusted === false || !isRemoteKeyboardTarget(e.target)
 +                || isVisibleLocalInput(e.target))
 +            return;
 +
-+        if (keyboardRestoreTimer !== null) {
-+            $window.clearTimeout(keyboardRestoreTimer);
-+            keyboardRestoreTimer = null;
-+        }
++        cancelKeyboardRestoreTimer();
 +
-+        if (restoreRemoteKeyboardInputNow(true, true))
++        // pointerdown/mousedown/touchstart run before the browser's default
++        // focus action, which may immediately steal focus again. Keep recovery
++        // armed until the bubbling click performs the final restoration.
++        if (restoreRemoteKeyboardInputNow(true, true) && e.type === 'click')
 +            keyboardRestorePendingUserGesture = false;
 +
 +    };
 +
++    /**
++     * Restores keyboard capture before Guacamole handles the first key after a
++     * background event. Ctrl-Alt-K always forces recovery, while the native
++     * Ctrl-Alt-Shift shortcut also recovers input before directly opening the
++     * Guacamole menu. Both shortcuts work even if lifecycle events were omitted.
++     */
++    var keyboardKeyGesture = function keyboardKeyGesture(e) {
++
++        var altGraph = e.getModifierState
++                && e.getModifierState('AltGraph');
++        var forceRecovery = e.ctrlKey && e.altKey && !e.shiftKey
++                && !altGraph
++                && (e.code === 'KeyK' || e.key === 'K' || e.key === 'k');
++        var forceMenu = e.ctrlKey && e.altKey && e.shiftKey && !altGraph;
++
++        if (forceRecovery || forceMenu) {
++            e.preventDefault();
++            e.stopImmediatePropagation();
++
++            if (e.repeat || (forceMenu && keyboardMenuShortcutActive))
++                return;
++
++            keyboardMenuShortcutActive = forceMenu;
++            keyboardRestorePendingUserGesture = true;
++        }
++
++        if (!keyboardRestorePendingUserGesture || $document[0].hidden
++                || e.isTrusted === false
++                || (!forceRecovery && !forceMenu
++                        && (!isRemoteKeyboardTarget(e.target)
++                        || isVisibleLocalInput(e.target))))
++            return;
++
++        cancelKeyboardRestoreTimer();
++
++        if (restoreRemoteKeyboardInputNow(true, true))
++            keyboardRestorePendingUserGesture = false;
++
++        if (forceMenu)
++            $scope.$evalAsync(function toggleGuacamoleMenu() {
++                $scope.$broadcast('guacToggleMenuRequested');
++            });
++
++    };
++
++    /**
++     * Allows the native Guacamole menu shortcut to be used again after any of
++     * its modifier keys has been released.
++     */
++    var keyboardKeyReleased = function keyboardKeyReleased(e) {
++        if (!(e.ctrlKey && e.altKey && e.shiftKey))
++            keyboardMenuShortcutActive = false;
++    };
++
++    /**
++     * Forces full keyboard/input recovery from a Guacamole menu action.
++     */
++    $scope.$on('guacForceInputRecovery', function forceInputRecovery() {
++        keyboardRestorePendingUserGesture = true;
++        cancelKeyboardRestoreTimer();
++        if (restoreRemoteKeyboardInputNow(true, true))
++            keyboardRestorePendingUserGesture = false;
++    });
++
 +    $document[0].addEventListener('visibilitychange', keyboardVisibilityChanged, true);
 +    $document[0].addEventListener('freeze', keyboardPageLifecycleChanged, true);
 +    $document[0].addEventListener('resume', keyboardPageLifecycleChanged, true);
++    $document[0].addEventListener('fullscreenchange', keyboardPageLifecycleChanged, true);
++    $document[0].addEventListener('pointerlockchange', keyboardPageLifecycleChanged, true);
 +    $document[0].addEventListener('pointerdown', keyboardUserGesture, true);
++    $document[0].addEventListener('mousedown', keyboardUserGesture, true);
++    $document[0].addEventListener('touchstart', keyboardUserGesture, true);
++    $document[0].addEventListener('click', keyboardUserGesture, false);
++    $window.addEventListener('keydown', keyboardKeyGesture, true);
++    $window.addEventListener('keyup', keyboardKeyReleased, true);
++    $window.addEventListener('pagehide', keyboardPageLifecycleChanged, true);
 +    $window.addEventListener('pageshow', keyboardPageLifecycleChanged, true);
 +
      // If we're logged in and not connected to anything, periodically check
      // whether the current session is still valid. If the session has expired,
      // refresh the auth state to reshow the login screen (rather than wait for
-@@ -278,9 +504,12 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -278,9 +616,12 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
      $window.addEventListener('cut',   clipboardService.resyncClipboard);
      $window.addEventListener('focus', function focusGained(e) {
  
@@ -360,7 +513,7 @@ diff --git a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextIn
  
                  // Ignore input events during text composition
                  if (composingText)
-@@ -311,9 +342,84 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
+@@ -311,9 +342,120 @@ angular.module('textInput').directive('guacTextInput', [function guacTextInput()
  
                  // Reset content
                  resetTextInputTarget(TEXT_INPUT_PADDING);
@@ -393,6 +546,45 @@ diff --git a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextIn
 +            $window.addEventListener("focus", resetAfterBrowserFocusChange, false);
 +
 +            /**
++             * Returns whether focus intentionally belongs to a visible local
++             * form control instead of the remote text-input target.
++             *
++             * @param {Element} element
++             *     The element to test.
++             *
++             * @returns {boolean}
++             */
++            var isVisibleLocalInput = function isVisibleLocalInput(element) {
++
++                while (element && element !== document.body) {
++
++                    if (element === target)
++                        return false;
++
++                    var tagName = element.tagName
++                            ? element.tagName.toLowerCase() : '';
++                    var isLocalInput = tagName === 'input'
++                            || tagName === 'textarea'
++                            || tagName === 'select'
++                            || tagName === 'button'
++                            || tagName === 'a'
++                            || element.isContentEditable;
++
++                    if (isLocalInput) {
++                        var rect = element.getBoundingClientRect();
++                        return rect.width > 0 && rect.height > 0
++                                && rect.right > 0 && rect.bottom > 0;
++                    }
++
++                    element = element.parentNode;
++
++                }
++
++                return false;
++
++            };
++
++            /**
 +             * Restores focus to the visible text-input target without stealing
 +             * focus from a local Guacamole form control.
 +             */
@@ -402,10 +594,7 @@ diff --git a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextIn
 +                    return;
 +
 +                var focused = document.activeElement;
-+                var focusedRect = focused && focused.getBoundingClientRect
-+                        ? focused.getBoundingClientRect() : null;
-+                if (!focused || focused === document.body || focused === target
-+                        || !focusedRect || !focusedRect.width || !focusedRect.height) {
++                if (!isVisibleLocalInput(focused)) {
 +
 +                    // Recreate the native editing context if Chromium kept this
 +                    // textarea active while suspending its IME session.
@@ -447,3 +636,37 @@ diff --git a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextIn
  
              // Do not allow event target contents to be selected during input
              target.addEventListener("selectstart", function(e) {
+diff --git a/guacamole/src/main/frontend/src/translations/en.json b/guacamole/src/main/frontend/src/translations/en.json
+--- a/guacamole/src/main/frontend/src/translations/en.json
++++ b/guacamole/src/main/frontend/src/translations/en.json
+@@ -124,10 +124,13 @@
+ 
+         "FIELD_PLACEHOLDER_FILTER" : "@:APP.FIELD_PLACEHOLDER_FILTER",
+ 
++        "ACTION_RECOVER_KEYBOARD" : "Recapture keyboard",
++
+         "HELP_CLIPBOARD"           : "Text copied/cut within Guacamole will appear here. Changes to the text below will affect the remote clipboard.",
+         "HELP_INPUT_METHOD_NONE"   : "No input method is used. Keyboard input is accepted from a connected, physical keyboard.",
+         "HELP_INPUT_METHOD_OSK"    : "Display and accept input from the built-in Guacamole on-screen keyboard. The on-screen keyboard allows typing of key combinations that may otherwise be impossible (such as Ctrl-Alt-Del).",
+         "HELP_INPUT_METHOD_TEXT"   : "Allow typing of text, and emulate keyboard events based on the typed text. This is necessary for devices such as mobile phones that lack a physical keyboard.",
++        "HELP_RECOVER_KEYBOARD"    : "Reset and recapture keyboard and IME input without refreshing. You can also press Ctrl-Alt-K.",
+         "HELP_MOUSE_MODE"          : "Determines how the remote mouse behaves with respect to touches.",
+         "HELP_MOUSE_MODE_ABSOLUTE" : "Tap to click. The click occurs at the location of the touch.",
+         "HELP_MOUSE_MODE_RELATIVE" : "Drag to move the mouse pointer and tap to click. The click occurs at the location of the pointer.",
+diff --git a/guacamole/src/main/frontend/src/translations/zh.json b/guacamole/src/main/frontend/src/translations/zh.json
+--- a/guacamole/src/main/frontend/src/translations/zh.json
++++ b/guacamole/src/main/frontend/src/translations/zh.json
+@@ -120,10 +120,13 @@
+ 
+         "FIELD_PLACEHOLDER_FILTER" : "@:APP.FIELD_PLACEHOLDER_FILTER",
+ 
++        "ACTION_RECOVER_KEYBOARD" : "重新捕获键盘",
++
+         "HELP_CLIPBOARD"           : "复制/剪切的文本将出现在这里。对下面文本内容所作的修改将会影响远程电脑上的剪贴板。",
+         "HELP_INPUT_METHOD_NONE"   : "没有选择任何输入方式。将从连接的物理键盘接受键盘输入。",
+         "HELP_INPUT_METHOD_OSK"    : "显示并从内建的 Guacamole 屏幕键盘接受输入。屏幕键盘可以输入平常无法输入的按键组合（如 Ctrl-Alt-Del 等）。",
+         "HELP_INPUT_METHOD_TEXT"   : "允许输入文本，并根据所输入的文本模拟键盘事件。可用于没有物理键盘的设备，如手机等。",
++        "HELP_RECOVER_KEYBOARD"    : "无需刷新即可重置并重新捕获键盘和输入法。也可按 Ctrl-Alt-K。",
+         "HELP_MOUSE_MODE"          : "设置远程电脑上的鼠标对触控行为的反应。",
+         "HELP_MOUSE_MODE_ABSOLUTE" : "点击时立即触发按键。在点击的位置触发鼠标按键事件。",
+         "HELP_MOUSE_MODE_RELATIVE" : "拖拽时移动鼠标，再点击时触发按键。在鼠标当前所在的位置触发按键事件。",

@@ -71,6 +71,8 @@ class RemoteKeyboardState:
         self.restore_pending_user_gesture = False
         self.native_context_stale = False
         self.synchronous_restores = 0
+        self.menu_shown = False
+        self.menu_shortcut_active = False
 
     def reset(self) -> None:
         self.remote_released.extend(self.pressed)
@@ -119,7 +121,6 @@ class RemoteKeyboardState:
             self.sink_focused = native_focus_restored
         if user_initiated:
             self.native_context_stale = False
-            self.restore_pending_user_gesture = False
             self.synchronous_restores += 1
         return True
 
@@ -127,6 +128,7 @@ class RemoteKeyboardState:
         self.hidden = True
         self.restore_queued = False
         self.restore_pending_user_gesture = True
+        self.menu_shortcut_active = False
         self.reset()
 
     def freeze(self) -> None:
@@ -136,17 +138,56 @@ class RemoteKeyboardState:
     def show(self) -> None:
         self.hidden = False
 
-    def pointerdown(self, *, local_control: bool = False) -> bool:
+    def pointer_event(self, event_type: str, *, local_control: bool = False) -> bool:
         if (
             not self.restore_pending_user_gesture
             or self.hidden
             or local_control
         ):
             return False
-        return self.perform_restore(
+        restored = self.perform_restore(
             user_initiated=True,
             ignore_existing_local_focus=True,
         )
+        if restored and event_type == "click":
+            self.restore_pending_user_gesture = False
+        return restored
+
+    def keydown(
+        self,
+        *,
+        force_recovery: bool = False,
+        force_menu: bool = False,
+        local_control: bool = False,
+    ) -> bool:
+        if force_menu and self.menu_shortcut_active:
+            return False
+        if force_menu:
+            self.menu_shortcut_active = True
+        if force_recovery or force_menu:
+            self.restore_pending_user_gesture = True
+        if (
+            not self.restore_pending_user_gesture
+            or self.hidden
+            or (local_control and not force_recovery and not force_menu)
+        ):
+            return False
+        restored = self.perform_restore(
+            user_initiated=True,
+            ignore_existing_local_focus=True,
+        )
+        if restored:
+            self.restore_pending_user_gesture = False
+            if force_menu:
+                self.menu_shown = not self.menu_shown
+        return restored
+
+    def keyup(self) -> None:
+        self.menu_shortcut_active = False
+
+    def menu_recover(self) -> bool:
+        self.restore_pending_user_gesture = True
+        return self.keydown(force_recovery=True)
 
 
 def main() -> None:
@@ -221,8 +262,9 @@ def main() -> None:
     assert cancelled.sink_focused is False
 
     # A long browser freeze may invalidate Chromium's native editing context.
-    # Deferred focus is insufficient, but the first trusted pointer gesture
-    # must synchronously rebuild the context without requiring a page refresh.
+    # Deferred focus is insufficient. Early pointer/mouse events pre-restore the
+    # context, while the bubbling click performs the final restore after browser
+    # default focus actions have run.
     frozen = RemoteKeyboardState()
     frozen.freeze()
     frozen.show()
@@ -231,20 +273,68 @@ def main() -> None:
     assert frozen.client_focused is True
     assert frozen.sink_focused is False
     assert frozen.restore_pending_user_gesture is True
-    assert frozen.pointerdown() is True
+    assert frozen.pointer_event("pointerdown") is True
+    assert frozen.restore_pending_user_gesture is True
+    # Model the browser's default mousedown focus action stealing focus again.
+    frozen.sink_focused = False
+    assert frozen.pointer_event("mousedown") is True
+    frozen.sink_focused = False
+    assert frozen.pointer_event("click") is True
     assert frozen.sink_focused is True
     assert frozen.native_context_stale is False
-    assert frozen.synchronous_restores == 1
+    assert frozen.restore_pending_user_gesture is False
+    assert frozen.synchronous_restores == 3
+
+    # If a drag/touch sequence produces no final click, the first keydown must
+    # complete recovery before Guacamole handles that same key event.
+    key_fallback = RemoteKeyboardState()
+    key_fallback.freeze()
+    key_fallback.show()
+    assert key_fallback.pointer_event("touchstart") is True
+    key_fallback.sink_focused = False
+    assert key_fallback.keydown() is True
+    assert key_fallback.sink_focused is True
+    assert key_fallback.restore_pending_user_gesture is False
 
     # Clicking a visible local control must not consume the pending trusted
     # gesture; a later click on the remote display can still recover input.
     frozen_local = RemoteKeyboardState()
     frozen_local.freeze()
     frozen_local.show()
-    assert frozen_local.pointerdown(local_control=True) is False
+    assert frozen_local.pointer_event("pointerdown", local_control=True) is False
     assert frozen_local.restore_pending_user_gesture is True
-    assert frozen_local.pointerdown() is True
+    assert frozen_local.pointer_event("click") is True
     assert frozen_local.sink_focused is True
+
+    # Both manual fallbacks must recover even when the browser omitted all
+    # lifecycle events and no pending marker exists.
+    hotkey = RemoteKeyboardState()
+    hotkey.native_context_stale = True
+    assert hotkey.keydown(force_recovery=True) is True
+    assert hotkey.sink_focused is True
+    assert hotkey.restore_pending_user_gesture is False
+
+    native_menu = RemoteKeyboardState()
+    native_menu.native_context_stale = True
+    native_menu.menu_shortcut_active = True
+    native_menu.hide()
+    native_menu.show()
+    assert native_menu.menu_shortcut_active is False
+    assert native_menu.keydown(force_menu=True) is True
+    assert native_menu.sink_focused is True
+    assert native_menu.menu_shown is True
+    assert native_menu.restore_pending_user_gesture is False
+    assert native_menu.keydown(force_menu=True) is False
+    assert native_menu.menu_shown is True
+    native_menu.keyup()
+    assert native_menu.keydown(force_menu=True, local_control=True) is True
+    assert native_menu.menu_shown is False
+
+    menu_action = RemoteKeyboardState()
+    menu_action.native_context_stale = True
+    assert menu_action.menu_recover() is True
+    assert menu_action.sink_focused is True
+    assert menu_action.restore_pending_user_gesture is False
 
     print("输入法、焦点所有权、修饰键和竞态状态回归测试通过。")
 

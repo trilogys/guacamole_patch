@@ -22,7 +22,7 @@ v7 可以作为**受控环境部署候选版**，但在真实 Chrome/Edge → Gu
 | 高 | `WORK_DIR` 被当成可直接删除的构建目录 | 用户误设环境变量时可能递归删除已有目录 | `WORK_DIR` 改为父目录，只清理 `mktemp` 创建的随机子目录 |
 | 中 | 补丁头使用假的新 Git blob 哈希 | `git apply --index` 不可信，包的专业性和可审计性下降 | 删除所有伪造 `index` 行，保留标准 unified diff |
 | 中 | 默认 `docker build --pull` | 相同源码和补丁在不同日期可能得到不同基础镜像 | 默认不强制拉取；可通过 `PULL_BASE_IMAGES=true` 显式启用 |
-| 中 | 镜像使用 `guacamole/guacamole` 官方命名空间样式 | 容易误解为 Apache/官方镜像 | 默认改为 `local/guacamole` |
+| 中 | 镜像使用 `guacamole/guacamole` 官方命名空间样式 | 容易误解为 Apache/官方镜像 | 默认改为 `trilogys/guacamole` |
 | 中 | 缺少 LICENSE 全文和完整修改声明 | 再分发合规信息不完整 | 加入 Apache License 2.0 和扩展 NOTICE |
 | 低 | 构建脚本未主动验证包内文件 | 文件损坏可能到后续阶段才暴露 | 构建开始即验证 `SHA256SUMS` |
 | 低 | 构建后没有镜像级冒烟检查 | 只知道 Docker build 返回成功 | 增加 image inspect 和 initdb 冒烟测试 |

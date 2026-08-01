@@ -32,6 +32,20 @@ def main() -> int:
     patch_path = root / "patches/0001-fix-ime-and-keyboard-after-tab-switch.patch"
     patch = patch_path.read_text(encoding="utf-8")
 
+    readme_en = (root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (root / "README.zh-CN.md").read_text(encoding="utf-8")
+    require("# Apache Guacamole 1.6.0 Input Recovery Fix v7" in readme_en,
+            "README.md must contain the English documentation")
+    require("[简体中文](README.zh-CN.md)" in readme_en,
+            "English README must link to the Chinese README")
+    require("# Apache Guacamole 1.6.0 输入法修复 v7" in readme_zh,
+            "README.zh-CN.md must contain the Chinese documentation")
+    require("[English](README.md)" in readme_zh,
+            "Chinese README must link to the English README")
+    require("trilogys/guacamole:1.6.0" in readme_en and
+            "trilogys/guacamole:1.6.0" in readme_zh,
+            "Both README files must document the default image")
+
     require("\nindex " not in "\n" + patch,
             "正式补丁不得包含伪造的 git postimage blob 哈希")
 

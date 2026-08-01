@@ -1,55 +1,57 @@
-# Apache Guacamole 1.6.0 输入法修复 v7
+English | [简体中文](README.zh-CN.md)
 
-这是针对 **Apache Guacamole 1.6.0** 的非官方下游补丁候选版，修复浏览器切换标签页后两类输入问题：
+# Apache Guacamole 1.6.0 Input Recovery Fix v7
 
-1. Guacamole“文本输入”模式中，中文停留在左下角、无法进入远程输入框，或 Backspace/Delete 失效；
-2. Guacamole 输入方式为“无（None）”时，远程 Windows 微软拼音或普通键盘在切换标签页后失效。
+This repository contains an unofficial downstream patch candidate for **Apache Guacamole 1.6.0**. It addresses two input failures that may occur after switching browser tabs or leaving a Guacamole session in the background for a long time:
 
-> 请只使用镜像标签 `trilogys/guacamole:1.6.0`。
+1. In Guacamole's Text input mode, composed Chinese text may remain in the lower-left input field, fail to reach the remote application, or cause Backspace/Delete to stop working.
+2. When Guacamole's input method is set to None, the remote Windows Microsoft Pinyin IME or regular keyboard input may stop working after returning to the tab.
 
-## 适用模式
+> Use only the image tag `trilogys/guacamole:1.6.0`.
 
-### 模式 A：本机输入法 + Guacamole 文本输入
+## Supported modes
 
-```text
-远程 Windows：ENG
-Guacamole 输入方式：文本输入
-本机：中文输入法
-```
-
-处理内容：
-
-- 浏览器遗漏 `compositionend` 后解除卡死；
-- 兼容 `input` 与 `compositionend` 的不同事件顺序；
-- 恢复当前远程连接的键盘焦点；
-- 恢复文字、Backspace 和 Delete 的发送；
-- 防止隐藏的原始键盘 `InputSink` 抢走左下角可见文本框焦点。
-
-### 模式 B：远程 Windows 微软拼音
+### Mode A: local IME with Guacamole Text input
 
 ```text
-Guacamole 输入方式：无（None）
-本机输入语言：ENG
-远程 Windows：微软拼音
-RDP 键盘布局：en-us-qwerty
+Remote Windows language: ENG
+Guacamole input method: Text input
+Local input method: Chinese IME
 ```
 
-处理内容：
+The patch:
 
-- 标签页隐藏时重置 Guacamole 记录的按键状态；
-- 标签页返回时恢复当前远程连接的键盘焦点；
-- 重新聚焦隐藏的原始键盘输入捕获器；
-- 显式释放 AltGr、Shift、Ctrl、Alt、Meta、Windows/Super 和 Hyper；
-- 合并短时间内重复发生的 `focus` 与 `visibilitychange`；
-- 处理长时间后台冻结以及 `freeze`、`resume`、`pageshow` 页面生命周期；
-- 在切回后的鼠标、触摸、点击或首次按键中同步重建 Chromium 原生输入上下文；
-- 将 `Ctrl+Alt+Shift` 作为独立恢复入口并保持侧边菜单开关语义；
-- 提供 `Ctrl+Alt+K` 和菜单“重新捕获键盘”手动恢复入口；
-- 不抢占 Guacamole 登录框、设置框、按钮、链接和可编辑元素。
+- recovers from a missing browser `compositionend` event;
+- handles different `input` and `compositionend` event orders;
+- restores keyboard focus to the active remote connection;
+- restores text, Backspace, and Delete delivery;
+- prevents the hidden raw-keyboard `InputSink` from stealing focus from the visible lower-left text field.
 
-## 构建前提
+### Mode B: Microsoft Pinyin inside remote Windows
 
-服务器需要：
+```text
+Guacamole input method: None
+Local input language: ENG
+Remote Windows input method: Microsoft Pinyin
+RDP keyboard layout: en-us-qwerty
+```
+
+The patch:
+
+- resets Guacamole's recorded key state when the tab becomes hidden;
+- restores keyboard focus to the active remote connection when the tab returns;
+- refocuses the hidden raw-keyboard input sink;
+- explicitly releases AltGr, Shift, Ctrl, Alt, Meta, Windows/Super, and Hyper;
+- coalesces repeated `focus` and `visibilitychange` events within a short interval;
+- handles long background suspension and the `freeze`, `resume`, and `pageshow` lifecycle events;
+- synchronously rebuilds Chromium's native input context on the first pointer, mouse, touch, click, or keyboard gesture after returning;
+- keeps `Ctrl+Alt+Shift` as an independent recovery path while preserving the side-menu toggle behavior;
+- provides `Ctrl+Alt+K` and the Recover keyboard capture menu action as manual recovery paths;
+- avoids stealing focus from Guacamole login fields, settings, buttons, links, and editable controls.
+
+## Build requirements
+
+The server requires:
 
 ```text
 Docker
@@ -61,9 +63,9 @@ sha256sum
 mktemp
 ```
 
-Node.js 不是必需项；存在时会额外执行修改文件的 JavaScript 语法检查。
+Node.js is optional. When available, it is used for additional JavaScript syntax checks on modified files.
 
-## 构建
+## Build
 
 ```bash
 sudo apt-get update
@@ -75,33 +77,33 @@ sha256sum -c ../guacamole-ime-fix-v7-1.6.0.tar.gz.sha256
 ./build.sh
 ```
 
-默认镜像：
+Default image:
 
 ```text
 trilogys/guacamole:1.6.0
 ```
 
-`build.sh` 会：
+`build.sh` performs the following steps:
 
-1. 校验补丁包内部所有文件；
-2. 锁定 Guacamole 版本为 1.6.0；
-3. 运行作用域、模式隔离、竞态和状态回归检查；
-4. 下载 Apache 官方源码并验证 SHA-256；
-5. 在真实源码上执行 `patch --dry-run`；
-6. 应用补丁并检查修改后的源文件；
-7. 使用官方 Dockerfile 构建，默认运行上游 Maven/前端测试；
-8. 检查镜像并执行 `initdb` 冒烟测试；
-9. 输出镜像 ID 和补丁 SHA-256。
+1. verifies every file in the patch package;
+2. locks the Guacamole version to 1.6.0;
+3. runs scope, mode-isolation, race-condition, and state-regression checks;
+4. downloads the official Apache source archive and verifies its SHA-256;
+5. runs `patch --dry-run` against the real source tree;
+6. applies the patch and verifies the modified source files;
+7. builds with the official Dockerfile and runs the upstream Maven/frontend tests by default;
+8. inspects the image and runs an `initdb` smoke test;
+9. prints the image ID and patch SHA-256.
 
-资源不足时可临时跳过上游测试，仅用于排错：
+If resources are temporarily constrained, upstream tests can be skipped for troubleshooting only:
 
 ```bash
 MAVEN_ARGUMENTS=-DskipTests=true ./build.sh
 ```
 
-正式部署应使用默认值。
+Use the default build settings for deployment.
 
-### 可选构建参数
+### Optional build parameters
 
 ```bash
 IMAGE_NAME=trilogys/guacamole:1.6.0 ./build.sh
@@ -110,13 +112,13 @@ KEEP_WORK_DIR=true ./build.sh
 PULL_BASE_IMAGES=true ./build.sh
 ```
 
-`WORK_DIR` 仅作为临时目录的父目录。脚本会在其中创建独立随机子目录，不会直接删除用户提供的目录。
+`WORK_DIR` is only the parent directory for temporary files. The script creates a separate random subdirectory within it and never directly deletes the user-provided directory.
 
-默认不强制 `--pull`，避免每次重建都无意改变基础镜像。首次构建仍可能从镜像仓库获取官方 Dockerfile 指定的基础镜像，因此完整位级可复现性仍取决于基础镜像是否已固定到本地。
+The build does not force `--pull` by default, which prevents the base image from changing unintentionally on every rebuild. The first build may still fetch images referenced by the official Dockerfile, so fully bit-for-bit reproducible builds require those base images to be pinned locally.
 
-## 接入现有 Compose
+## Integrate with an existing Compose deployment
 
-将 `docker-compose.override.yml` 放到原 Compose 项目目录：
+Place `docker-compose.override.yml` in the existing Compose project directory:
 
 ```yaml
 services:
@@ -124,7 +126,7 @@ services:
     image: trilogys/guacamole:1.6.0
 ```
 
-然后执行：
+Then run:
 
 ```bash
 docker compose config
@@ -132,8 +134,7 @@ docker compose up -d --force-recreate guacamole
 docker logs --tail=100 guacamole_compose
 ```
 
-`docker-compose.override.yml` 是默认配置，始终使用 v7。官方 1.6.0 镜像保存在
-`docker-compose.official.yml` 中，仅作为备用：
+`docker-compose.override.yml` is the default configuration and always selects v7. The official Apache Guacamole 1.6.0 image remains available through `docker-compose.official.yml` as a fallback:
 
 ```bash
 # Default: v7
@@ -144,42 +145,42 @@ docker compose -f docker-compose.yml -f docker-compose.official.yml \
   up -d --force-recreate guacamole
 ```
 
-此补丁不修改：
+This patch does not modify:
 
 ```text
 guacd
-PostgreSQL 数据结构和数据
+PostgreSQL schema or data
 Nginx
 FRP
-连接账号
-录像和共享目录
+Connection accounts
+Recording or shared directories
 ```
 
-首次打开新镜像后执行一次强制刷新：
+Perform one hard refresh after opening the new image for the first time:
 
 ```text
 Ctrl + F5
 ```
 
-## 必做验收
+## Required acceptance testing
 
-详细步骤见 `TEST_MATRIX.md`。至少完成：
+See `TEST_MATRIX.md` for the detailed procedure. At minimum, verify:
 
-- Chrome/Edge 中两种输入模式各切换标签页 20 次；
-- 按住 Ctrl、Shift、Alt 后切出，切回后确认远端没有卡键；
-- 中文候选、数字选词、Backspace、Delete、方向键、Enter；
-- Guacamole 菜单、登录框和设置框不会被抢焦点；
-- 同一账号断开重连后仍正常；
-- 回滚到官方镜像成功。
+- 20 tab switches in each input mode in Chrome and Edge;
+- no stuck remote modifier after switching away while holding Ctrl, Shift, or Alt;
+- Chinese candidate selection, numeric candidate selection, Backspace, Delete, arrow keys, and Enter;
+- Guacamole menus, login fields, and settings retain correct focus behavior;
+- input still works after disconnecting and reconnecting the same account;
+- rollback to the official image succeeds.
 
-## 已知边界
+## Known limitations
 
-- `Win+Space`、`Alt+Tab` 等快捷键可能被本机系统或浏览器截获；切换远程输入法建议点击远程任务栏语言图标。
-- 尚未在你的真实 Windows RDP 会话中完成端到端验证。
-- iframe、移动端 WebView、多连接同时选中、非 Chrome/Edge 浏览器需要单独验收。
-- 此包未附带预构建镜像、镜像签名、SBOM 或漏洞扫描结果。
+- Shortcuts such as `Win+Space` and `Alt+Tab` may be intercepted by the local operating system or browser. Use the remote Windows taskbar language selector when necessary.
+- End-to-end validation against your actual Windows RDP session is still required.
+- iframe deployments, mobile WebViews, multiple simultaneously selected connections, and browsers other than Chrome/Edge require separate validation.
+- The package does not include a prebuilt image, image signature, SBOM, or vulnerability scan results.
 
-## 回滚
+## Rollback
 
 ```yaml
 services:
@@ -191,8 +192,8 @@ services:
 docker compose up -d --force-recreate guacamole
 ```
 
-由于没有数据库迁移，回滚不需要恢复数据库。
+No database restore is required because the patch introduces no database migration.
 
-## 许可证
+## License
 
-本补丁包遵循 Apache License 2.0。Apache Guacamole 的版权和 NOTICE 要求保持不变。此包不是 Apache Software Foundation 官方发布。
+This patch package is licensed under the Apache License 2.0. Apache Guacamole copyright and NOTICE requirements remain unchanged. This package is not an official Apache Software Foundation release.

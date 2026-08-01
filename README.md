@@ -132,6 +132,18 @@ docker compose up -d --force-recreate guacamole
 docker logs --tail=100 guacamole_compose
 ```
 
+`docker-compose.override.yml` 是默认配置，始终使用 v7。官方 1.6.0 镜像保存在
+`docker-compose.official.yml` 中，仅作为备用：
+
+```bash
+# Default: v7
+docker compose up -d --force-recreate guacamole
+
+# Fallback: official Apache Guacamole 1.6.0
+docker compose -f docker-compose.yml -f docker-compose.official.yml \
+  up -d --force-recreate guacamole
+```
+
 此补丁不修改：
 
 ```text

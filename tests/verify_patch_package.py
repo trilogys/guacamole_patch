@@ -111,6 +111,10 @@ def main() -> int:
     require("local/guacamole:1.6.0-inputfix7" in compose,
             "Compose 覆盖文件未使用 v7 本地镜像标签")
 
+    official_compose = (root / "docker-compose.official.yml").read_text(encoding="utf-8")
+    require("guacamole/guacamole:1.6.0" in official_compose,
+            "Official Compose fallback must use Apache Guacamole 1.6.0")
+
     metadata_path = root / "RELEASE_METADATA.json"
     require(metadata_path.exists(), "缺少 RELEASE_METADATA.json")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -122,6 +126,8 @@ def main() -> int:
             "发布元数据版本必须为 inputfix7")
     require(metadata["default_image"] == "local/guacamole:1.6.0-inputfix7",
             "发布元数据默认镜像必须为 inputfix7")
+    require(metadata["fallback_image"] == "guacamole/guacamole:1.6.0",
+            "Release metadata fallback image must be official Guacamole 1.6.0")
     require(
         metadata["patch_sha256"] == hashlib.sha256(patch_path.read_bytes()).hexdigest(),
         "发布元数据中的补丁 SHA-256 与实际补丁不一致",

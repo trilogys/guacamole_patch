@@ -94,7 +94,7 @@ def main() -> int:
         ("sha256sum --check --status SHA256SUMS", "补丁包内部完整性检查"),
         ("SUPPORTED_VERSION=\"1.6.0\"", "版本锁定"),
         ("BUILD_WORK_DIR=\"$(mktemp -d", "安全的独立临时目录"),
-        ("local/guacamole:", "本地镜像命名空间"),
+        ("trilogys/guacamole:", "Trilogys image namespace"),
         ("PULL_BASE_IMAGES", "可控的基础镜像拉取策略"),
         ("docker image inspect", "构建结果检查"),
         ("/opt/guacamole/bin/initdb.sh", "镜像冒烟测试"),
@@ -108,8 +108,12 @@ def main() -> int:
             "不得无条件拉取浮动基础镜像")
 
     compose = (root / "docker-compose.override.yml").read_text(encoding="utf-8")
-    require("local/guacamole:1.6.0-inputfix7" in compose,
-            "Compose 覆盖文件未使用 v7 本地镜像标签")
+    require("trilogys/guacamole:1.6.0" in compose,
+            "Compose override must use the Trilogys Guacamole image")
+
+    official_compose = (root / "docker-compose.official.yml").read_text(encoding="utf-8")
+    require("guacamole/guacamole:1.6.0" in official_compose,
+            "Official Compose fallback must use Apache Guacamole 1.6.0")
 
     metadata_path = root / "RELEASE_METADATA.json"
     require(metadata_path.exists(), "缺少 RELEASE_METADATA.json")
@@ -120,8 +124,10 @@ def main() -> int:
             "不得把尚未完成的端到端验证标记为已完成")
     require(metadata["package_version"] == "1.6.0-inputfix7",
             "发布元数据版本必须为 inputfix7")
-    require(metadata["default_image"] == "local/guacamole:1.6.0-inputfix7",
-            "发布元数据默认镜像必须为 inputfix7")
+    require(metadata["default_image"] == "trilogys/guacamole:1.6.0",
+            "Release metadata default image must use the Trilogys namespace")
+    require(metadata["fallback_image"] == "guacamole/guacamole:1.6.0",
+            "Release metadata fallback image must be official Guacamole 1.6.0")
     require(
         metadata["patch_sha256"] == hashlib.sha256(patch_path.read_bytes()).hexdigest(),
         "发布元数据中的补丁 SHA-256 与实际补丁不一致",

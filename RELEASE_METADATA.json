@@ -5,7 +5,8 @@
   "upstream_version": "1.6.0",
   "upstream_source_sha256": "81f9fd5a7b4377fb0ee295d0d4fec92e9667f2aafaa3d0ed8937f535deabdee4",
   "patch_sha256": "b76bac72bd98c5e70314e84c384f3feacaaff7c5535b50f05bc6637f1d037e10",
-  "default_image": "local/guacamole:1.6.0-inputfix7",
+  "default_image": "trilogys/guacamole:1.6.0",
+  "fallback_image": "guacamole/guacamole:1.6.0",
   "database_migration": false,
   "end_to_end_rdp_validation": false
 }

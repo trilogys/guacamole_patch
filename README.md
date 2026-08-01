@@ -5,7 +5,7 @@
 1. Guacamole“文本输入”模式中，中文停留在左下角、无法进入远程输入框，或 Backspace/Delete 失效；
 2. Guacamole 输入方式为“无（None）”时，远程 Windows 微软拼音或普通键盘在切换标签页后失效。
 
-> 请只使用镜像标签 `local/guacamole:1.6.0-inputfix7`。
+> 请只使用镜像标签 `trilogys/guacamole:1.6.0`。
 
 ## 适用模式
 
@@ -78,7 +78,7 @@ sha256sum -c ../guacamole-ime-fix-v7-1.6.0.tar.gz.sha256
 默认镜像：
 
 ```text
-local/guacamole:1.6.0-inputfix7
+trilogys/guacamole:1.6.0
 ```
 
 `build.sh` 会：
@@ -104,7 +104,7 @@ MAVEN_ARGUMENTS=-DskipTests=true ./build.sh
 ### 可选构建参数
 
 ```bash
-IMAGE_NAME=local/guacamole:1.6.0-inputfix7 ./build.sh
+IMAGE_NAME=trilogys/guacamole:1.6.0 ./build.sh
 WORK_DIR=/var/tmp ./build.sh
 KEEP_WORK_DIR=true ./build.sh
 PULL_BASE_IMAGES=true ./build.sh
@@ -121,7 +121,7 @@ PULL_BASE_IMAGES=true ./build.sh
 ```yaml
 services:
   guacamole:
-    image: local/guacamole:1.6.0-inputfix7
+    image: trilogys/guacamole:1.6.0
 ```
 
 然后执行：
@@ -130,6 +130,18 @@ services:
 docker compose config
 docker compose up -d --force-recreate guacamole
 docker logs --tail=100 guacamole_compose
+```
+
+`docker-compose.override.yml` 是默认配置，始终使用 v7。官方 1.6.0 镜像保存在
+`docker-compose.official.yml` 中，仅作为备用：
+
+```bash
+# Default: v7
+docker compose up -d --force-recreate guacamole
+
+# Fallback: official Apache Guacamole 1.6.0
+docker compose -f docker-compose.yml -f docker-compose.official.yml \
+  up -d --force-recreate guacamole
 ```
 
 此补丁不修改：

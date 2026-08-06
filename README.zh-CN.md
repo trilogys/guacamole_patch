@@ -1,17 +1,50 @@
 [English](README.md) | 简体中文
 
-# Apache Guacamole 1.6.0 输入法修复 v7
+# guacamole_patch
 
-这是针对 **Apache Guacamole 1.6.0** 的非官方下游补丁候选版，修复浏览器切换标签页后两类输入问题：
+这是针对 **Apache Guacamole 1.6.0** 的非官方下游补丁，重点改善浏览器切换标签页、页面长时间进入后台或恢复后出现的键盘与输入法失效问题。
 
-1. Guacamole“文本输入”模式中，中文停留在左下角、无法进入远程输入框，或 Backspace/Delete 失效；
-2. Guacamole 输入方式为“无（None）”时，远程 Windows 微软拼音或普通键盘在切换标签页后失效。
+本仓库不是 Apache Software Foundation 官方发布版本。
 
-> 请只使用镜像标签 `trilogys/guacamole:1.6.0`。
+## 快速部署
 
-## 适用模式
+拉取已经构建好的镜像：
 
-### 模式 A：本机输入法 + Guacamole 文本输入
+```bash
+docker pull ghcr.io/trilogys/guacamole_patch:1.6.0
+```
+
+在 Docker Compose 中使用：
+
+```yaml
+services:
+  guacamole:
+    image: ghcr.io/trilogys/guacamole_patch:1.6.0
+```
+
+只更新 Guacamole Web 容器：
+
+```bash
+docker compose pull guacamole
+docker compose up -d --force-recreate --no-deps guacamole
+docker compose ps
+docker compose logs --tail=100 guacamole
+```
+
+Docker 会复用没有变化的镜像层，后续拉取通常只下载发生变化的部分。不要执行 `docker compose down -v`，也不要删除数据库卷。
+
+## 镜像标签
+
+- `1.6.0`：当前发布镜像，每次正式构建都会更新这个标签。
+- `main`：由 `main` 分支最新代码构建。
+- `sha-<commit>`：对应特定源码提交的固定标签，适合精确部署和回滚。
+- `dev`：由 `dev` 分支构建的开发镜像。
+
+正式发布请选择 `main` 运行工作流。选择 `dev` 时也会更新共用的 `1.6.0` 标签。
+
+## 修复内容
+
+### 本机输入法 + Guacamole 文本输入
 
 ```text
 远程 Windows：ENG
@@ -19,15 +52,9 @@ Guacamole 输入方式：文本输入
 本机：中文输入法
 ```
 
-处理内容：
+补丁会处理浏览器遗漏的输入法合成结束事件，恢复当前远程连接的焦点以及文字、Backspace、Delete 的发送，并防止隐藏的原始键盘输入框抢占可见文本框焦点。
 
-- 浏览器遗漏 `compositionend` 后解除卡死；
-- 兼容 `input` 与 `compositionend` 的不同事件顺序；
-- 恢复当前远程连接的键盘焦点；
-- 恢复文字、Backspace 和 Delete 的发送；
-- 防止隐藏的原始键盘 `InputSink` 抢走左下角可见文本框焦点。
-
-### 模式 B：远程 Windows 微软拼音
+### 远程 Windows 微软拼音
 
 ```text
 Guacamole 输入方式：无（None）
@@ -36,23 +63,25 @@ Guacamole 输入方式：无（None）
 RDP 键盘布局：en-us-qwerty
 ```
 
-处理内容：
+补丁会在页面隐藏时重置按键状态，返回页面后恢复键盘捕获，释放可能卡住的修饰键，处理长时间后台冻结和页面生命周期事件，并在首次操作时重建 Chromium 原生输入上下文。
 
-- 禁止隐藏的原始键盘输入框接收本机输入法合成文本，由远程系统的中英文状态决定最终输入；
-- 标签页隐藏时重置 Guacamole 记录的按键状态；
-- 标签页返回时恢复当前远程连接的键盘焦点；
-- 重新聚焦隐藏的原始键盘输入捕获器；
-- 显式释放 AltGr、Shift、Ctrl、Alt、Meta、Windows/Super 和 Hyper；
-- 合并短时间内重复发生的 `focus` 与 `visibilitychange`；
-- 处理长时间后台冻结以及 `freeze`、`resume`、`pageshow` 页面生命周期；
-- 在切回后的鼠标、触摸、点击或首次按键中同步重建 Chromium 原生输入上下文；
-- 将 `Ctrl+Alt+Shift` 作为独立恢复入口并保持侧边菜单开关语义；
-- 提供 `Ctrl+Alt+K` 和菜单“重新捕获键盘”手动恢复入口；
-- 不抢占 Guacamole 登录框、设置框、按钮、链接和可编辑元素。
+仍可通过 `Ctrl+Alt+K` 或菜单中的“重新捕获键盘”进行手动恢复。
 
-## 构建前提
+## GitHub Actions 构建
 
-服务器需要：
+进入 **Actions → Build and publish Guacamole image → Run workflow**，选择 `main` 后运行。
+
+构建成功会发布：
+
+```text
+ghcr.io/trilogys/guacamole_patch:1.6.0
+ghcr.io/trilogys/guacamole_patch:main
+ghcr.io/trilogys/guacamole_patch:sha-<commit>
+```
+
+## 手动构建
+
+需要：
 
 ```text
 Docker
@@ -64,198 +93,57 @@ sha256sum
 mktemp
 ```
 
-Node.js 不是必需项；存在时会额外执行修改文件的 JavaScript 语法检查。
-
-## 构建
+克隆并构建：
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y curl patch python3
+git clone https://github.com/trilogys/guacamole_patch.git
+cd guacamole_patch
 
-tar -xzf guacamole-ime-fix-v7-1.6.0.tar.gz
-cd guacamole-ime-fix-v7
-sha256sum -c ../guacamole-ime-fix-v7-1.6.0.tar.gz.sha256
-./build.sh
-```
-
-默认镜像：
-
-```text
-trilogys/guacamole:1.6.0
-```
-
-`build.sh` 会：
-
-1. 校验补丁包内部所有文件；
-2. 锁定 Guacamole 版本为 1.6.0；
-3. 运行作用域、模式隔离、竞态和状态回归检查；
-4. 下载 Apache 官方源码并验证 SHA-256；
-5. 在真实源码上执行 `patch --dry-run`；
-6. 应用补丁并检查修改后的源文件；
-7. 使用官方 Dockerfile 构建，默认运行上游 Maven/前端测试；
-8. 检查镜像并执行 `initdb` 冒烟测试；
-9. 输出镜像 ID 和补丁 SHA-256。
-
-资源不足时可临时跳过上游测试，仅用于排错：
-
-```bash
-MAVEN_ARGUMENTS=-DskipTests=true ./build.sh
-```
-
-正式部署应使用默认值。
-
-### 可选构建参数
-
-```bash
-IMAGE_NAME=trilogys/guacamole:1.6.0 ./build.sh
-WORK_DIR=/var/tmp ./build.sh
-KEEP_WORK_DIR=true ./build.sh
-PULL_BASE_IMAGES=true ./build.sh
-```
-
-`WORK_DIR` 仅作为临时目录的父目录。脚本会在其中创建独立随机子目录，不会直接删除用户提供的目录。
-
-默认不强制 `--pull`，避免每次重建都无意改变基础镜像。首次构建仍可能从镜像仓库获取官方 Dockerfile 指定的基础镜像，因此完整位级可复现性仍取决于基础镜像是否已固定到本地。
-
-## 服务器部署流程
-
-Git 仓库只负责构建镜像，现有 Compose 项目继续负责运行 Guacamole 和数据库相关服务：
-
-```text
-源码和构建：/opt/Guacamole/guacamole/guacamole-repo
-Compose 运行：/opt/Guacamole/guacamole
-```
-
-构建前不需要停止当前 Guacamole 容器。旧容器会继续使用原镜像 ID，直到新容器重建完成。
-
-### 1. 更新服务器代码
-
-```bash
-cd /opt/Guacamole/guacamole/guacamole-repo
-
-git status --short
-git fetch origin dev
-git switch dev
-git pull --ff-only origin dev
-git log --oneline -5
-```
-
-如果 `git status --short` 有输出，立即停止，不要覆盖服务器本地修改。确认当前历史包含远程输入法修复提交：
-
-```bash
-git merge-base --is-ancestor f5a5d37 HEAD
-git show --no-patch --oneline f5a5d37
-```
-
-### 2. 保留当前镜像用于回滚
-
-```bash
-docker tag \
-  trilogys/guacamole:1.6.0 \
-  trilogys/guacamole:1.6.0-before-remote-ime
-```
-
-### 3. 快速构建新镜像
-
-受控测试部署可以跳过耗时的上游 Maven 测试。包完整性、补丁结构、回归检查、补丁
-dry-run、源码检查、镜像检查和 `initdb` 冒烟测试仍会执行：
-
-```bash
-cd /opt/Guacamole/guacamole/guacamole-repo
-
-MAVEN_ARGUMENTS=-DskipTests=true \
-IMAGE_NAME=trilogys/guacamole:1.6.0 \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0" \
 bash ./build.sh
 ```
 
-构建成功后检查镜像中的补丁哈希：
+排错时可以使用较快的构建参数：
 
 ```bash
-docker image inspect trilogys/guacamole:1.6.0 \
+MAVEN_ARGUMENTS="-T 1C -Dmaven.test.skip=true" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0" \
+bash ./build.sh
+```
+
+`build.sh` 会验证补丁包和 Apache 源码压缩包、运行回归检查、试应用并正式应用补丁、使用官方 Dockerfile 构建镜像、检查镜像并执行 `initdb` 冒烟测试。
+
+## 验证镜像
+
+```bash
+docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0 \
   --format '{{index .Config.Labels "io.guacamole.inputfix.patch-sha256"}}'
 ```
 
-应该输出：
+预期补丁 SHA-256：
 
 ```text
 28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c
 ```
 
-### 4. 只重建 Guacamole Web 容器
+## 验收测试
 
-```bash
-cd /opt/Guacamole/guacamole
+完整步骤见 [TEST_MATRIX.md](TEST_MATRIX.md)。至少验证：
 
-docker compose config
-docker compose up -d --force-recreate guacamole
-docker compose ps
-docker compose logs --tail=100 guacamole
-```
+- 本机中文输入法、远程 Windows 为 ENG 时的输入；
+- 远程微软拼音的候选和选词；
+- Chrome 和 Edge 中反复切换标签页；
+- Ctrl、Shift、Alt 不会卡键；
+- Backspace、Delete、方向键、Enter 和数字选词；
+- 同一账号断开后重新连接；
+- 能够回滚到已知正常镜像。
 
-此操作不会迁移或替换 PostgreSQL 数据、guacd、Nginx、FRP、连接账号、录像或共享目录。
-不要执行 `docker compose down -v`，也不要删除数据库卷。
+## 影响范围与限制
 
-`docker-compose.override.yml` 默认选择 `trilogys/guacamole:1.6.0`。官方
-Apache Guacamole 1.6.0 镜像仍通过 `docker-compose.official.yml` 作为独立备用。
+补丁不修改 `guacd`、PostgreSQL 数据结构和数据、Nginx、FRP、连接账号、录像或共享目录。
 
-此补丁不修改：
-
-```text
-guacd
-PostgreSQL 数据结构和数据
-Nginx
-FRP
-连接账号
-录像和共享目录
-```
-
-首次打开新镜像后执行一次强制刷新：
-
-```text
-Ctrl + F5
-```
-
-## 必做验收
-
-详细步骤见 `TEST_MATRIX.md`。至少完成：
-
-- 本机保持中文输入法、远程 Windows 为 ENG 时，输入字母仍为英文；
-- 本机保持中文输入法、远程启用微软拼音时，由远程输入法显示候选并完成选词；
-- Chrome/Edge 中两种输入模式各切换标签页 20 次；
-- 按住 Ctrl、Shift、Alt 后切出，切回后确认远端没有卡键；
-- 中文候选、数字选词、Backspace、Delete、方向键、Enter；
-- Guacamole 菜单、登录框和设置框不会被抢焦点；
-- 同一账号断开重连后仍正常；
-- 回滚到官方镜像成功。
-
-## 已知边界
-
-- `Win+Space`、`Alt+Tab` 等快捷键可能被本机系统或浏览器截获；切换远程输入法建议点击远程任务栏语言图标。
-- 尚未在你的真实 Windows RDP 会话中完成端到端验证。
-- iframe、移动端 WebView、多连接同时选中、非 Chrome/Edge 浏览器需要单独验收。
-- 此包未附带预构建镜像、镜像签名、SBOM 或漏洞扫描结果。
-
-## 回滚
-
-```bash
-docker tag \
-  trilogys/guacamole:1.6.0-before-remote-ime \
-  trilogys/guacamole:1.6.0
-
-cd /opt/Guacamole/guacamole
-docker compose up -d --force-recreate guacamole
-```
-
-这样可以直接恢复上一个自定义镜像，不需要重新构建。官方镜像仍作为第二回滚方案：
-
-```bash
-cd /opt/Guacamole/guacamole
-docker compose -f docker-compose.yml -f docker-compose.official.yml \
-  up -d --force-recreate guacamole
-```
-
-由于没有数据库迁移，回滚不需要恢复数据库。
+`Win+Space`、`Alt+Tab` 等快捷键可能被本机操作系统或浏览器拦截。正式部署前仍需在实际 Windows RDP 环境中完成验收。
 
 ## 许可证
 
-本补丁包遵循 Apache License 2.0。Apache Guacamole 的版权和 NOTICE 要求保持不变。此包不是 Apache Software Foundation 官方发布。
+本补丁包遵循 Apache License 2.0。Apache Guacamole 的版权和 NOTICE 要求保持不变。

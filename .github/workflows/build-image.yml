@@ -6,7 +6,6 @@ on:
     branches:
       - dev
     paths:
-      - .github/workflows/build-image.yml
       - build.sh
       - patches/**
       - tests/**
@@ -23,7 +22,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  RELEASE_TAG: 1.6.0-inputfix7
+  RELEASE_TAG: 1.6.0
 
 jobs:
   build-and-publish:
@@ -37,7 +36,7 @@ jobs:
       - name: Prepare image metadata
         shell: bash
         run: |
-          image_name="${REGISTRY}/${GITHUB_REPOSITORY_OWNER}/guacamole"
+          image_name="${REGISTRY}/${GITHUB_REPOSITORY_OWNER}/guacamole_patch"
           echo "PUBLISH_IMAGE=${image_name,,}" >> "$GITHUB_ENV"
           echo "SHORT_SHA=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
 

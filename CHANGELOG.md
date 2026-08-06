@@ -2,6 +2,7 @@
 
 ## 1.6.0-inputfix7
 
+- Make raw-keyboard mode authoritative by preventing the hidden input sink from accepting local IME composition text.
 - Recover keyboard and IME capture across blur, visibility, freeze, page-cache, fullscreen, and pointer-lock transitions.
 - Retry recovery through pointer, mouse, touch, click, and first-key gestures without stealing focus from local controls.
 - Make `Ctrl+Alt+Shift` independently recover input and toggle the Guacamole menu even when keyboard state is stale.

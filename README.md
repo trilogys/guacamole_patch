@@ -31,13 +31,14 @@ The patch:
 
 ```text
 Guacamole input method: None
-Local input language: ENG
+Local input language: ENG or a local IME
 Remote Windows input method: Microsoft Pinyin
 RDP keyboard layout: en-us-qwerty
 ```
 
 The patch:
 
+- makes the remote input language authoritative by preventing the hidden raw-keyboard input sink from accepting local IME composition text;
 - resets Guacamole's recorded key state when the tab becomes hidden;
 - restores keyboard focus to the active remote connection when the tab returns;
 - refocuses the hidden raw-keyboard input sink;

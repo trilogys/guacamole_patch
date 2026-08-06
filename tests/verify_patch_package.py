@@ -57,6 +57,8 @@ def main() -> int:
     required = [
         "restoreRemoteKeyboardInput",
         "Downstream modification:",
+        "sinkElement.readOnly = true;",
+        "sinkElement.setAttribute('inputmode', 'none');",
         "REMOTE_MODIFIER_KEYSYMS",
         "0xFE03, /* AltGr",
         "hasActiveTunnel()",

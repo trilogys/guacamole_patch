@@ -8,6 +8,7 @@ v7 可以作为**受控环境部署候选版**，但在真实 Chrome/Edge → Gu
 
 | 严重度 | 发现 | 影响 | v7 处理 |
 | --- | --- | --- | --- |
+| 高 | 原始键盘 `InputSink` 仍是可编辑 textarea，且上游会转发本机 `compositionend` 文本 | 本机中文输入法可覆盖远程 Windows 的英文状态 | 将隐藏输入捕获器设为只读并声明 `inputmode=none`，让远程输入语言成为最终决定方 |
 | 高 | 长时间后台冻结后，异步 `blur()` / `focus()` 可能在 Chromium 尚未恢复原生编辑上下文时执行 | 切回后输入法继续失效，只有刷新页面才能恢复 | 保留待用户手势恢复状态，依次使用 pointer、mouse、touch、click 和首次 keydown 同步重建输入上下文 |
 | 高 | 丢失修饰键 `keyup` 后，菜单快捷键状态可能永久残留 | `Ctrl+Alt+Shift` 与输入法一起失效 | 在 blur、隐藏、freeze、pagehide、pageshow 和 resume 时清除快捷键锁，并直接恢复后切换菜单 |
 | 高 | 文本模式把任意可见元素当成本地输入框 | 远程画布获得焦点后 textarea 不再恢复 | 仅保护真实表单和可编辑控件，远程非表单元素不阻止恢复 |

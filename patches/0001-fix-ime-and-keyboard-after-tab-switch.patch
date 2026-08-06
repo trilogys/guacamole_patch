@@ -68,7 +68,23 @@ diff --git a/guacamole/src/main/frontend/src/app/client/templates/client.html b/
 diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 --- a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 +++ b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
-@@ -221,6 +221,8 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -178,3 +178,9 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+     // Add default destination for input events
+     var sink = new Guacamole.InputSink();
+-    $document[0].body.appendChild(sink.getElement());
++    var sinkElement = sink.getElement();
++
++    // Downstream modification: raw-keyboard mode must bypass local IMEs so
++    // the remote desktop's current input language remains authoritative.
++    sinkElement.readOnly = true;
++    sinkElement.setAttribute('inputmode', 'none');
++    $document[0].body.appendChild(sinkElement);
+@@ -182,3 +188,3 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+     // Create event listeners at the global level
+     var keyboard = new Guacamole.Keyboard($document[0]);
+-    keyboard.listenTo(sink.getElement());
++    keyboard.listenTo(sinkElement);
+@@ -221,6 +227,8 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
  
      // Release all keys when window loses focus
      $window.onblur = function () {
@@ -77,7 +93,7 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
          keyboard.reset();
      };
  
-@@ -250,6 +252,342 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -250,6 +258,342 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
  
      };
  
@@ -420,7 +436,7 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
      // If we're logged in and not connected to anything, periodically check
      // whether the current session is still valid. If the session has expired,
      // refresh the auth state to reshow the login screen (rather than wait for
-@@ -278,9 +616,12 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -278,9 +622,12 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
      $window.addEventListener('cut',   clipboardService.resyncClipboard);
      $window.addEventListener('focus', function focusGained(e) {
  

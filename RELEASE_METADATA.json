@@ -4,7 +4,7 @@
   "upstream_project": "Apache Guacamole",
   "upstream_version": "1.6.0",
   "upstream_source_sha256": "81f9fd5a7b4377fb0ee295d0d4fec92e9667f2aafaa3d0ed8937f535deabdee4",
-  "patch_sha256": "b76bac72bd98c5e70314e84c384f3feacaaff7c5535b50f05bc6637f1d037e10",
+  "patch_sha256": "28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c",
   "default_image": "trilogys/guacamole:1.6.0",
   "fallback_image": "guacamole/guacamole:1.6.0",
   "database_migration": false,

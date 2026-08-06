@@ -31,13 +31,14 @@ The patch:
 
 ```text
 Guacamole input method: None
-Local input language: ENG
+Local input language: ENG or a local IME
 Remote Windows input method: Microsoft Pinyin
 RDP keyboard layout: en-us-qwerty
 ```
 
 The patch:
 
+- makes the remote input language authoritative by preventing the hidden raw-keyboard input sink from accepting local IME composition text;
 - resets Guacamole's recorded key state when the tab becomes hidden;
 - restores keyboard focus to the active remote connection when the tab returns;
 - refocuses the hidden raw-keyboard input sink;
@@ -116,34 +117,92 @@ PULL_BASE_IMAGES=true ./build.sh
 
 The build does not force `--pull` by default, which prevents the base image from changing unintentionally on every rebuild. The first build may still fetch images referenced by the official Dockerfile, so fully bit-for-bit reproducible builds require those base images to be pinned locally.
 
-## Integrate with an existing Compose deployment
+## Server deployment workflow
 
-Place `docker-compose.override.yml` in the existing Compose project directory:
+The Git checkout is used only to build the image. The existing Compose project
+remains responsible for running Guacamole and its database-related services:
 
-```yaml
-services:
-  guacamole:
-    image: trilogys/guacamole:1.6.0
+```text
+Source and build: /opt/Guacamole/guacamole/guacamole-repo
+Compose runtime:  /opt/Guacamole/guacamole
 ```
 
-Then run:
+Do not stop the currently running Guacamole container before the build. It will
+continue using its existing image ID until the replacement container is created.
+
+### 1. Update the server checkout
 
 ```bash
+cd /opt/Guacamole/guacamole/guacamole-repo
+
+git status --short
+git fetch origin dev
+git switch dev
+git pull --ff-only origin dev
+git log --oneline -5
+```
+
+Stop if `git status --short` prints any local changes. Confirm that the remote
+IME fix commit is contained in the checked-out history:
+
+```bash
+git merge-base --is-ancestor f5a5d37 HEAD
+git show --no-patch --oneline f5a5d37
+```
+
+### 2. Preserve the current image for rollback
+
+```bash
+docker tag \
+  trilogys/guacamole:1.6.0 \
+  trilogys/guacamole:1.6.0-before-remote-ime
+```
+
+### 3. Build the replacement image
+
+The controlled test deployment may skip the time-consuming upstream Maven test
+suite. Package integrity, patch structure, regression checks, patch dry-run,
+source verification, image inspection, and the `initdb` smoke test still run:
+
+```bash
+cd /opt/Guacamole/guacamole/guacamole-repo
+
+MAVEN_ARGUMENTS=-DskipTests=true \
+IMAGE_NAME=trilogys/guacamole:1.6.0 \
+bash ./build.sh
+```
+
+Verify that the resulting image contains the expected patch:
+
+```bash
+docker image inspect trilogys/guacamole:1.6.0 \
+  --format '{{index .Config.Labels "io.guacamole.inputfix.patch-sha256"}}'
+```
+
+Expected value:
+
+```text
+28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c
+```
+
+### 4. Recreate only the Guacamole web container
+
+```bash
+cd /opt/Guacamole/guacamole
+
 docker compose config
 docker compose up -d --force-recreate guacamole
-docker logs --tail=100 guacamole_compose
+docker compose ps
+docker compose logs --tail=100 guacamole
 ```
 
-`docker-compose.override.yml` is the default configuration and always selects v7. The official Apache Guacamole 1.6.0 image remains available through `docker-compose.official.yml` as a fallback:
+This does not migrate or replace PostgreSQL data, guacd, Nginx, FRP,
+connection accounts, recordings, or shared directories. Do not run
+`docker compose down -v` or delete database volumes.
 
-```bash
-# Default: v7
-docker compose up -d --force-recreate guacamole
-
-# Fallback: official Apache Guacamole 1.6.0
-docker compose -f docker-compose.yml -f docker-compose.official.yml \
-  up -d --force-recreate guacamole
-```
+`docker-compose.override.yml` selects `trilogys/guacamole:1.6.0` by default.
+The official Apache Guacamole 1.6.0 image remains available through
+`docker-compose.official.yml` as a separate fallback.
 
 This patch does not modify:
 
@@ -166,6 +225,8 @@ Ctrl + F5
 
 See `TEST_MATRIX.md` for the detailed procedure. At minimum, verify:
 
+- with the local IME set to Chinese and remote Windows set to ENG, letters remain English;
+- with the local IME left in Chinese and remote Microsoft Pinyin enabled, candidate selection is handled by the remote IME;
 - 20 tab switches in each input mode in Chrome and Edge;
 - no stuck remote modifier after switching away while holding Ctrl, Shift, or Alt;
 - Chinese candidate selection, numeric candidate selection, Backspace, Delete, arrow keys, and Enter;
@@ -182,14 +243,22 @@ See `TEST_MATRIX.md` for the detailed procedure. At minimum, verify:
 
 ## Rollback
 
-```yaml
-services:
-  guacamole:
-    image: guacamole/guacamole:1.6.0
+```bash
+docker tag \
+  trilogys/guacamole:1.6.0-before-remote-ime \
+  trilogys/guacamole:1.6.0
+
+cd /opt/Guacamole/guacamole
+docker compose up -d --force-recreate guacamole
 ```
 
+The previous custom image can therefore be restored without rebuilding. The
+official image remains a secondary fallback:
+
 ```bash
-docker compose up -d --force-recreate guacamole
+cd /opt/Guacamole/guacamole
+docker compose -f docker-compose.yml -f docker-compose.official.yml \
+  up -d --force-recreate guacamole
 ```
 
 No database restore is required because the patch introduces no database migration.

@@ -45,6 +45,16 @@ def main() -> int:
     require("trilogys/guacamole:1.6.0" in readme_en and
             "trilogys/guacamole:1.6.0" in readme_zh,
             "Both README files must document the default image")
+    for needle in [
+        "/opt/Guacamole/guacamole/guacamole-repo",
+        "/opt/Guacamole/guacamole",
+        "f5a5d37",
+        "trilogys/guacamole:1.6.0-before-remote-ime",
+        "28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c",
+        "docker compose up -d --force-recreate guacamole",
+    ]:
+        require(needle in readme_en and needle in readme_zh,
+                f"Both README files must document deployment step: {needle}")
 
     require("\nindex " not in "\n" + patch,
             "正式补丁不得包含伪造的 git postimage blob 哈希")
@@ -57,6 +67,8 @@ def main() -> int:
     required = [
         "restoreRemoteKeyboardInput",
         "Downstream modification:",
+        "sinkElement.readOnly = true;",
+        "sinkElement.setAttribute('inputmode', 'none');",
         "REMOTE_MODIFIER_KEYSYMS",
         "0xFE03, /* AltGr",
         "hasActiveTunnel()",

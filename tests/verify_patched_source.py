@@ -52,6 +52,8 @@ def main() -> int:
         ("const $document", "indexController 已注入 $document"),
         ("const $window", "indexController 已注入 $window"),
         ("var sink = new Guacamole.InputSink()", "indexController 拥有 InputSink"),
+        ("sinkElement.readOnly = true;", "raw input sink rejects local IME composition"),
+        ("sinkElement.setAttribute('inputmode', 'none');", "raw input sink disables local software IME input"),
         ("var keyboard = new Guacamole.Keyboard", "indexController 拥有 keyboard"),
         ("var hasActiveTunnel", "indexController 可检查活动连接"),
         ("restoreRemoteKeyboardInput", "恢复原始键盘通道"),

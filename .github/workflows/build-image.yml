@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - dev
+      - main
     paths:
       - build.sh
       - patches/**
@@ -59,7 +59,7 @@ jobs:
         run: |
           source_image="${PUBLISH_IMAGE}:${RELEASE_TAG}"
 
-          for tag in "${RELEASE_TAG}" dev "sha-${SHORT_SHA}"; do
+          for tag in "${RELEASE_TAG}" main "sha-${SHORT_SHA}"; do
             target_image="${PUBLISH_IMAGE}:${tag}"
             docker tag "$source_image" "$target_image"
             docker push "$target_image"
@@ -72,7 +72,7 @@ jobs:
             echo "### Published Guacamole image"
             echo
             echo "- \`${PUBLISH_IMAGE}:${RELEASE_TAG}\`"
-            echo "- \`${PUBLISH_IMAGE}:dev\`"
+            echo "- \`${PUBLISH_IMAGE}:main\`"
             echo "- \`${PUBLISH_IMAGE}:sha-${SHORT_SHA}\`"
             echo
             echo "Source commit: \`${GITHUB_SHA}\`"

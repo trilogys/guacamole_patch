@@ -117,35 +117,86 @@ PULL_BASE_IMAGES=true ./build.sh
 
 默认不强制 `--pull`，避免每次重建都无意改变基础镜像。首次构建仍可能从镜像仓库获取官方 Dockerfile 指定的基础镜像，因此完整位级可复现性仍取决于基础镜像是否已固定到本地。
 
-## 接入现有 Compose
+## 服务器部署流程
 
-将 `docker-compose.override.yml` 放到原 Compose 项目目录：
+Git 仓库只负责构建镜像，现有 Compose 项目继续负责运行 Guacamole 和数据库相关服务：
 
-```yaml
-services:
-  guacamole:
-    image: trilogys/guacamole:1.6.0
+```text
+源码和构建：/opt/Guacamole/guacamole/guacamole-repo
+Compose 运行：/opt/Guacamole/guacamole
 ```
 
-然后执行：
+构建前不需要停止当前 Guacamole 容器。旧容器会继续使用原镜像 ID，直到新容器重建完成。
+
+### 1. 更新服务器代码
 
 ```bash
+cd /opt/Guacamole/guacamole/guacamole-repo
+
+git status --short
+git fetch origin dev
+git switch dev
+git pull --ff-only origin dev
+git log --oneline -5
+```
+
+如果 `git status --short` 有输出，立即停止，不要覆盖服务器本地修改。确认当前历史包含远程输入法修复提交：
+
+```bash
+git merge-base --is-ancestor f5a5d37 HEAD
+git show --no-patch --oneline f5a5d37
+```
+
+### 2. 保留当前镜像用于回滚
+
+```bash
+docker tag \
+  trilogys/guacamole:1.6.0 \
+  trilogys/guacamole:1.6.0-before-remote-ime
+```
+
+### 3. 快速构建新镜像
+
+受控测试部署可以跳过耗时的上游 Maven 测试。包完整性、补丁结构、回归检查、补丁
+dry-run、源码检查、镜像检查和 `initdb` 冒烟测试仍会执行：
+
+```bash
+cd /opt/Guacamole/guacamole/guacamole-repo
+
+MAVEN_ARGUMENTS=-DskipTests=true \
+IMAGE_NAME=trilogys/guacamole:1.6.0 \
+bash ./build.sh
+```
+
+构建成功后检查镜像中的补丁哈希：
+
+```bash
+docker image inspect trilogys/guacamole:1.6.0 \
+  --format '{{index .Config.Labels "io.guacamole.inputfix.patch-sha256"}}'
+```
+
+应该输出：
+
+```text
+28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c
+```
+
+### 4. 只重建 Guacamole Web 容器
+
+```bash
+cd /opt/Guacamole/guacamole
+
 docker compose config
 docker compose up -d --force-recreate guacamole
-docker logs --tail=100 guacamole_compose
+docker compose ps
+docker compose logs --tail=100 guacamole
 ```
 
-`docker-compose.override.yml` 是默认配置，始终使用 v7。官方 1.6.0 镜像保存在
-`docker-compose.official.yml` 中，仅作为备用：
+此操作不会迁移或替换 PostgreSQL 数据、guacd、Nginx、FRP、连接账号、录像或共享目录。
+不要执行 `docker compose down -v`，也不要删除数据库卷。
 
-```bash
-# Default: v7
-docker compose up -d --force-recreate guacamole
-
-# Fallback: official Apache Guacamole 1.6.0
-docker compose -f docker-compose.yml -f docker-compose.official.yml \
-  up -d --force-recreate guacamole
-```
+`docker-compose.override.yml` 默认选择 `trilogys/guacamole:1.6.0`。官方
+Apache Guacamole 1.6.0 镜像仍通过 `docker-compose.official.yml` 作为独立备用。
 
 此补丁不修改：
 
@@ -168,6 +219,8 @@ Ctrl + F5
 
 详细步骤见 `TEST_MATRIX.md`。至少完成：
 
+- 本机保持中文输入法、远程 Windows 为 ENG 时，输入字母仍为英文；
+- 本机保持中文输入法、远程启用微软拼音时，由远程输入法显示候选并完成选词；
 - Chrome/Edge 中两种输入模式各切换标签页 20 次；
 - 按住 Ctrl、Shift、Alt 后切出，切回后确认远端没有卡键；
 - 中文候选、数字选词、Backspace、Delete、方向键、Enter；
@@ -184,14 +237,21 @@ Ctrl + F5
 
 ## 回滚
 
-```yaml
-services:
-  guacamole:
-    image: guacamole/guacamole:1.6.0
+```bash
+docker tag \
+  trilogys/guacamole:1.6.0-before-remote-ime \
+  trilogys/guacamole:1.6.0
+
+cd /opt/Guacamole/guacamole
+docker compose up -d --force-recreate guacamole
 ```
 
+这样可以直接恢复上一个自定义镜像，不需要重新构建。官方镜像仍作为第二回滚方案：
+
 ```bash
-docker compose up -d --force-recreate guacamole
+cd /opt/Guacamole/guacamole
+docker compose -f docker-compose.yml -f docker-compose.official.yml \
+  up -d --force-recreate guacamole
 ```
 
 由于没有数据库迁移，回滚不需要恢复数据库。

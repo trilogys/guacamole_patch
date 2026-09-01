@@ -1,4 +1,5 @@
-name: Build and publish Guacamole image
+name: Build and publish Guacamole recovery image
+run-name: Publish recovery1 from ${{ github.ref_name }} @ ${{ github.sha }}
 
 on:
   workflow_dispatch:
@@ -23,9 +24,11 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   RELEASE_TAG: 1.6.0
+  PACKAGE_TAG: 1.6.0-recovery1
 
 jobs:
   build-and-publish:
+    name: Build and publish recovery1
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -47,19 +50,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build patched Guacamole image
+      - name: Build Guacamole recovery image
         shell: bash
         run: |
           MAVEN_ARGUMENTS="-T 1C -Dmaven.test.skip=true" \
-          IMAGE_NAME="${PUBLISH_IMAGE}:${RELEASE_TAG}" \
+          IMAGE_NAME="${PUBLISH_IMAGE}:${PACKAGE_TAG}" \
           bash ./build.sh
 
       - name: Publish image tags
         shell: bash
         run: |
-          source_image="${PUBLISH_IMAGE}:${RELEASE_TAG}"
+          source_image="${PUBLISH_IMAGE}:${PACKAGE_TAG}"
 
-          for tag in "${RELEASE_TAG}" main "sha-${SHORT_SHA}"; do
+          for tag in "${PACKAGE_TAG}" "${RELEASE_TAG}" main "sha-${SHORT_SHA}"; do
             target_image="${PUBLISH_IMAGE}:${tag}"
             docker tag "$source_image" "$target_image"
             docker push "$target_image"
@@ -69,8 +72,9 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### Published Guacamole image"
+            echo "### Published Guacamole recovery image"
             echo
+            echo "- \`${PUBLISH_IMAGE}:${PACKAGE_TAG}\`"
             echo "- \`${PUBLISH_IMAGE}:${RELEASE_TAG}\`"
             echo "- \`${PUBLISH_IMAGE}:main\`"
             echo "- \`${PUBLISH_IMAGE}:sha-${SHORT_SHA}\`"

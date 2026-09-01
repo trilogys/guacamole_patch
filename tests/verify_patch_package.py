@@ -10,6 +10,8 @@ from pathlib import Path
 TARGETS = [
     "guacamole/src/main/frontend/src/app/client/controllers/clientController.js",
     "guacamole/src/main/frontend/src/app/client/templates/client.html",
+    "guacamole/src/main/frontend/src/app/client/styles/connection-warning.css",
+    "guacamole/src/main/frontend/src/app/client/types/ManagedClient.js",
     "guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js",
     "guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js",
     "guacamole/src/main/frontend/src/app/index/controllers/indexController.js",
@@ -34,24 +36,21 @@ def main() -> int:
 
     readme_en = (root / "README.md").read_text(encoding="utf-8")
     readme_zh = (root / "README.zh-CN.md").read_text(encoding="utf-8")
-    require("# Apache Guacamole 1.6.0 Input Recovery Fix v7" in readme_en,
+    require("# guacamole_patch" in readme_en,
             "README.md must contain the English documentation")
     require("[简体中文](README.zh-CN.md)" in readme_en,
             "English README must link to the Chinese README")
-    require("# Apache Guacamole 1.6.0 输入法修复 v7" in readme_zh,
+    require("# guacamole_patch" in readme_zh,
             "README.zh-CN.md must contain the Chinese documentation")
     require("[English](README.md)" in readme_zh,
             "Chinese README must link to the English README")
-    require("trilogys/guacamole:1.6.0" in readme_en and
-            "trilogys/guacamole:1.6.0" in readme_zh,
+    require("ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" in readme_en and
+            "ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" in readme_zh,
             "Both README files must document the default image")
     for needle in [
-        "/opt/Guacamole/guacamole/guacamole-repo",
-        "/opt/Guacamole/guacamole",
-        "f5a5d37",
-        "trilogys/guacamole:1.6.0-before-remote-ime",
-        "28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c",
-        "docker compose up -d --force-recreate guacamole",
+        "docker compose up -d --force-recreate --no-deps guacamole",
+        "Ctrl+Alt+K",
+        "Apache Guacamole 1.6.0",
     ]:
         require(needle in readme_en and needle in readme_zh,
                 f"Both README files must document deployment step: {needle}")
@@ -107,6 +106,27 @@ def main() -> int:
         "tagName === 'textarea'",
         "tagName === 'button'",
         "tagName === 'a'",
+        "TUNNEL_UNSTABLE_WARNING_DELAY = 3000",
+        "currentTunnelState",
+        "scheduleUnstableWarning",
+        "tunnelVisibilityChanged",
+        "endUnstableWarning",
+        "reconnectSuggested",
+        "isConnectionRecoveryAvailable",
+        "reconnectDegradedClients",
+        "guacClientManager.replaceManagedClient",
+        "dismissConnectionRecovery",
+        "TEXT_CLIENT_STATUS_RECOVERED_SLOW",
+        "ACTION_DISMISS_RECOVERY",
+        "hasActiveTransfers",
+        "AUTO_RECONNECT_DELAY = 5000",
+        "AUTO_RECONNECT_MAX_ATTEMPTS = 2",
+        "AUTO_RECONNECT_RESET_DELAY = 60000",
+        "queueAutoReconnect",
+        "cancelAutoReconnect",
+        "scheduleAutoReconnectReset",
+        "isAutomaticReconnectPending",
+        "TEXT_CLIENT_STATUS_RECOVERED_RECONNECTING",
     ]
     for needle in required:
         require(needle in patch, f"补丁缺少关键逻辑：{needle}")
@@ -120,11 +140,13 @@ def main() -> int:
         ("sha256sum --check --status SHA256SUMS", "补丁包内部完整性检查"),
         ("SUPPORTED_VERSION=\"1.6.0\"", "版本锁定"),
         ("BUILD_WORK_DIR=\"$(mktemp -d", "安全的独立临时目录"),
-        ("trilogys/guacamole:", "Trilogys image namespace"),
+        ("ghcr.io/trilogys/guacamole_patch:", "Guacamole recovery image namespace"),
         ("PULL_BASE_IMAGES", "可控的基础镜像拉取策略"),
         ("docker image inspect", "构建结果检查"),
         ("/opt/guacamole/bin/initdb.sh", "镜像冒烟测试"),
         ("org.opencontainers.image.licenses=Apache-2.0", "OCI 许可证标签"),
+        ("org.opencontainers.image.version=${GUACAMOLE_VERSION}-recovery1", "具名恢复版本标签"),
+        ("io.guacamole.recovery.patch-sha256", "恢复补丁哈希标签"),
     ]:
         require(needle in build, f"构建脚本缺少：{label}")
 
@@ -134,8 +156,17 @@ def main() -> int:
             "不得无条件拉取浮动基础镜像")
 
     compose = (root / "docker-compose.override.yml").read_text(encoding="utf-8")
-    require("trilogys/guacamole:1.6.0" in compose,
-            "Compose override must use the Trilogys Guacamole image")
+    require("ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" in compose,
+            "Compose override must use the named recovery image")
+
+    workflow = (root / ".github/workflows/build-image.yml").read_text(encoding="utf-8")
+    for needle, label in [
+        ("Build and publish Guacamole recovery image", "Actions 工作流名称"),
+        ("Publish recovery1 from", "Actions 运行名称"),
+        ("PACKAGE_TAG: 1.6.0-recovery1", "具名镜像标签"),
+        ('"${PACKAGE_TAG}" "${RELEASE_TAG}" main', "具名与滚动标签发布"),
+    ]:
+        require(needle in workflow, f"Actions 工作流缺少：{label}")
 
     official_compose = (root / "docker-compose.official.yml").read_text(encoding="utf-8")
     require("guacamole/guacamole:1.6.0" in official_compose,
@@ -148,16 +179,23 @@ def main() -> int:
             "发布状态必须明确为受控部署候选版")
     require(metadata["end_to_end_rdp_validation"] is False,
             "不得把尚未完成的端到端验证标记为已完成")
-    require(metadata["package_version"] == "1.6.0-inputfix7",
-            "发布元数据版本必须为 inputfix7")
-    require(metadata["default_image"] == "trilogys/guacamole:1.6.0",
-            "Release metadata default image must use the Trilogys namespace")
+    require(metadata["package_version"] == "1.6.0-recovery1",
+            "发布元数据版本必须为 recovery1")
+    require(metadata["release_name"] == "Guacamole Input and Network Recovery",
+            "发布元数据必须包含正式恢复版本名称")
+    require(metadata["base_repository_commit"] == "47c6f90e77b5561a2908d03a841d4f503ea4198e",
+            "发布元数据必须记录远端 main 比较基线")
+    require(metadata["default_image"] == "ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1",
+            "Release metadata default image must use the named recovery tag")
     require(metadata["fallback_image"] == "guacamole/guacamole:1.6.0",
             "Release metadata fallback image must be official Guacamole 1.6.0")
     require(
         metadata["patch_sha256"] == hashlib.sha256(patch_path.read_bytes()).hexdigest(),
         "发布元数据中的补丁 SHA-256 与实际补丁不一致",
     )
+    require(metadata["patch_sha256"] in readme_en and
+            metadata["patch_sha256"] in readme_zh,
+            "Both README files must document the current patch SHA-256")
 
     license_path = root / "LICENSE"
     notice_path = root / "NOTICE"

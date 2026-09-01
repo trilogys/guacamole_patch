@@ -1,7 +1,52 @@
 diff --git a/guacamole/src/main/frontend/src/app/client/controllers/clientController.js b/guacamole/src/main/frontend/src/app/client/controllers/clientController.js
 --- a/guacamole/src/main/frontend/src/app/client/controllers/clientController.js
 +++ b/guacamole/src/main/frontend/src/app/client/controllers/clientController.js
-@@ -144,6 +144,21 @@ angular.module('client').controller('clientController', ['$scope', '$routeParams
+@@ -34,6 +34,7 @@ angular.module('client').controller('clientController', ['$scope', '$routeParams
+ 
+     // Required services
+     const $location              = $injector.get('$location');
++    const $timeout               = $injector.get('$timeout');
+     const authenticationService  = $injector.get('authenticationService');
+     const connectionGroupService = $injector.get('connectionGroupService');
+     const clipboardService       = $injector.get('clipboardService');
+@@ -94,6 +95,36 @@ angular.module('client').controller('clientController', ['$scope', '$routeParams
+      */
+     var DEL_KEY = 0xFFFF;
+ 
++    /**
++     * Initial delay before automatically rebuilding a recovered connection.
++     * Each consecutive attempt doubles this delay.
++     *
++     * @type Number
++     */
++    var AUTO_RECONNECT_DELAY = 5000;
++
++    /**
++     * Maximum consecutive automatic reconnect attempts per connection.
++     *
++     * @type Number
++     */
++    var AUTO_RECONNECT_MAX_ATTEMPTS = 2;
++
++    /**
++     * Stable time after which the automatic reconnect attempt count resets.
++     *
++     * @type Number
++     */
++    var AUTO_RECONNECT_RESET_DELAY = 60000;
++
++    /**
++     * Automatic reconnect attempt counts, pending timers, and reset timers by
++     * ManagedClient ID.
++     */
++    var autoReconnectAttempts = {};
++    var autoReconnectTimers = {};
++    var autoReconnectResetTimers = {};
++
+     /**
+      * Menu-specific properties.
+      */
+@@ -144,6 +175,21 @@ angular.module('client').controller('clientController', ['$scope', '$routeParams
          $scope.menu.shown = false;
      };
  
@@ -23,6 +68,208 @@ diff --git a/guacamole/src/main/frontend/src/app/client/controllers/clientContro
      /**
       * Applies any changes to connection parameters made by the user within the
       * Guacamole menu to the given ManagedClient. If no client is supplied,
+@@ -661,6 +707,190 @@ angular.module('client').controller('clientController', ['$scope', '$routeParams
+         return _.findIndex($scope.clientGroup.clients, client => client.clientState.tunnelUnstable) !== -1;
+     };
+ 
++    /**
++     * Returns whether the given client still has an active connection.
++     */
++    var isClientConnectionActive = function isClientConnectionActive(client) {
++        const state = client.clientState.connectionState;
++        return state === ManagedClientState.ConnectionState.WAITING
++            || state === ManagedClientState.ConnectionState.CONNECTED;
++    };
++
++    /**
++     * Returns the currently-attached client having the given ID, if any.
++     */
++    var getAttachedClient = function getAttachedClient(id) {
++        if (!$scope.clientGroup)
++            return null;
++        return _.find($scope.clientGroup.clients, client => client.id === id);
++    };
++
++    /**
++     * Cancels a pending automatic reconnect for the given client ID.
++     */
++    var cancelAutoReconnect = function cancelAutoReconnect(id) {
++        if (autoReconnectTimers[id]) {
++            $timeout.cancel(autoReconnectTimers[id]);
++            delete autoReconnectTimers[id];
++        }
++
++        const client = getAttachedClient(id);
++        if (client)
++            client.autoReconnectPending = false;
++    };
++
++    /**
++     * Cancels a pending stable-period reset for the given client ID.
++     */
++    var cancelAutoReconnectReset = function cancelAutoReconnectReset(id) {
++        if (autoReconnectResetTimers[id]) {
++            $timeout.cancel(autoReconnectResetTimers[id]);
++            delete autoReconnectResetTimers[id];
++        }
++    };
++
++    /**
++     * Schedules the attempt counter to reset after a successful stable period.
++     */
++    var scheduleAutoReconnectReset = function scheduleAutoReconnectReset(id) {
++        cancelAutoReconnectReset(id);
++
++        autoReconnectResetTimers[id] = $timeout(function resetAutoReconnectAttempts() {
++            delete autoReconnectResetTimers[id];
++
++            const client = getAttachedClient(id);
++            if (client && isClientConnectionActive(client)
++                    && !client.clientState.tunnelUnstable) {
++                autoReconnectAttempts[id] = 0;
++            }
++        }, AUTO_RECONNECT_RESET_DELAY);
++    };
++
++    /**
++     * Returns whether the given client can be automatically reconnected now.
++     */
++    var canAutoReconnect = function canAutoReconnect(client) {
++        return client.reconnectSuggested
++            && !client.clientState.tunnelUnstable
++            && isClientConnectionActive(client)
++            && !ManagedClient.hasActiveTransfers(client);
++    };
++
++    /**
++     * Queues a bounded automatic reconnect for the given recovered client.
++     */
++    var queueAutoReconnect = function queueAutoReconnect(client) {
++        const id = client.id;
++        const attempts = autoReconnectAttempts[id] || 0;
++        if (autoReconnectTimers[id] || attempts >= AUTO_RECONNECT_MAX_ATTEMPTS)
++            return;
++
++        const delay = AUTO_RECONNECT_DELAY * Math.pow(2, attempts);
++        client.autoReconnectPending = true;
++
++        autoReconnectTimers[id] = $timeout(function autoReconnectClient() {
++            delete autoReconnectTimers[id];
++            client.autoReconnectPending = false;
++
++            // The client may have been replaced, become unstable again, or
++            // started a transfer while this reconnect was pending.
++            const currentClient = getAttachedClient(id);
++            if (currentClient !== client || !canAutoReconnect(currentClient))
++                return;
++
++            autoReconnectAttempts[id] = attempts + 1;
++            guacClientManager.replaceManagedClient(id);
++        }, delay);
++    };
++
++    /**
++     * Returns whether reconnecting one or more clients should be offered after
++     * a confirmed period of tunnel instability.
++     *
++     * @returns {Boolean}
++     *     true if at least one client may benefit from being reconnected.
++     */
++    $scope.isConnectionRecoveryAvailable = function isConnectionRecoveryAvailable() {
++        return _.findIndex($scope.clientGroup.clients, client =>
++            client.reconnectSuggested && isClientConnectionActive(client)) !== -1;
++    };
++
++    /**
++     * Returns whether an automatic reconnect is currently pending.
++     */
++    $scope.isAutomaticReconnectPending = function isAutomaticReconnectPending() {
++        return _.findIndex($scope.clientGroup.clients,
++            client => client.autoReconnectPending) !== -1;
++    };
++
++    /**
++     * Replaces all clients which experienced confirmed tunnel instability.
++     */
++    $scope.reconnectDegradedClients = function reconnectDegradedClients() {
++        $scope.clientGroup.clients.slice().forEach(client => {
++            if (client.reconnectSuggested && isClientConnectionActive(client)) {
++                cancelAutoReconnect(client.id);
++                cancelAutoReconnectReset(client.id);
++                autoReconnectAttempts[client.id] = 0;
++                guacClientManager.replaceManagedClient(client.id);
++            }
++        });
++    };
++
++    /**
++     * Dismisses the recovery suggestion without reconnecting.
++     */
++    $scope.dismissConnectionRecovery = function dismissConnectionRecovery() {
++        $scope.clientGroup.clients.forEach(client => {
++            cancelAutoReconnect(client.id);
++            client.reconnectSuggested = false;
++        });
++    };
++
++    // Queue or cancel automatic recovery as tunnel and transfer state changes.
++    $scope.$watchCollection(function getAutoReconnectState() {
++        if (!$scope.clientGroup)
++            return [];
++
++        return $scope.clientGroup.clients.map(client => [
++            client.id,
++            client.reconnectSuggested,
++            client.clientState.tunnelUnstable,
++            client.clientState.connectionState,
++            ManagedClient.hasActiveTransfers(client)
++        ].join(':'));
++    }, function autoReconnectStateChanged() {
++
++        if (!$scope.clientGroup) {
++            Object.keys(autoReconnectTimers).forEach(cancelAutoReconnect);
++            Object.keys(autoReconnectResetTimers).forEach(cancelAutoReconnectReset);
++            return;
++        }
++
++        const candidates = {};
++        $scope.clientGroup.clients.forEach(client => {
++            if (canAutoReconnect(client)) {
++                candidates[client.id] = true;
++                queueAutoReconnect(client);
++            }
++
++            const attempts = autoReconnectAttempts[client.id] || 0;
++            if (attempts && isClientConnectionActive(client)
++                    && !client.clientState.tunnelUnstable) {
++                if (!autoReconnectResetTimers[client.id])
++                    scheduleAutoReconnectReset(client.id);
++            }
++            else
++                cancelAutoReconnectReset(client.id);
++        });
++
++        Object.keys(autoReconnectTimers).forEach(id => {
++            if (!candidates[id])
++                cancelAutoReconnect(id);
++        });
++
++    });
++
+     /**
+      * Immediately disconnects all currently-focused clients, if any.
+      */
+@@ -870,6 +1100,10 @@ angular.module('client').controller('clientController', ['$scope', '$routeParams
+ 
+     // Clean up when view destroyed
+     $scope.$on('$destroy', function clientViewDestroyed() {
++
++        Object.keys(autoReconnectTimers).forEach(cancelAutoReconnect);
++        Object.keys(autoReconnectResetTimers).forEach(cancelAutoReconnectReset);
++
+         setAttachedGroup(null);
+ 
+         // always unset fullscreen mode to not confuse user 
 diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 --- a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 +++ b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
@@ -49,10 +296,59 @@ diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClie
          /**
           * @borrows ManagedClientGroup.hasMultipleClients
           */
+diff --git a/guacamole/src/main/frontend/src/app/client/styles/connection-warning.css b/guacamole/src/main/frontend/src/app/client/styles/connection-warning.css
+--- a/guacamole/src/main/frontend/src/app/client/styles/connection-warning.css
++++ b/guacamole/src/main/frontend/src/app/client/styles/connection-warning.css
+@@ -54,3 +54,15 @@
+     background-repeat: no-repeat;
+ 
+ }
++
++#connection-warning .actions {
++    display: flex;
++    flex-wrap: wrap;
++    justify-content: flex-end;
++    gap: 0.5em;
++    margin-top: 0.5em;
++}
++
++#connection-warning .actions button {
++    font-size: 1em;
++}
 diff --git a/guacamole/src/main/frontend/src/app/client/templates/client.html b/guacamole/src/main/frontend/src/app/client/templates/client.html
 --- a/guacamole/src/main/frontend/src/app/client/templates/client.html
 +++ b/guacamole/src/main/frontend/src/app/client/templates/client.html
-@@ -133,6 +133,12 @@
+@@ -41,8 +41,27 @@
+     </div>
+ 
+     <!-- Connection stability warning -->
+-    <div id="connection-warning" ng-show="isConnectionUnstable()">
+-        {{'CLIENT.TEXT_CLIENT_STATUS_UNSTABLE' | translate}}
++    <div id="connection-warning"
++         ng-show="isConnectionUnstable() || isConnectionRecoveryAvailable()">
++        <div class="message" ng-if="isConnectionUnstable()">
++            {{'CLIENT.TEXT_CLIENT_STATUS_UNSTABLE' | translate}}
++        </div>
++        <div class="message"
++             ng-if="!isConnectionUnstable() && isAutomaticReconnectPending()">
++            {{'CLIENT.TEXT_CLIENT_STATUS_RECOVERED_RECONNECTING' | translate}}
++        </div>
++        <div class="message"
++             ng-if="!isConnectionUnstable() && !isAutomaticReconnectPending()">
++            {{'CLIENT.TEXT_CLIENT_STATUS_RECOVERED_SLOW' | translate}}
++        </div>
++        <div class="actions">
++            <button class="reconnect" ng-click="reconnectDegradedClients()">
++                {{'CLIENT.ACTION_RECONNECT' | translate}}
++            </button>
++            <button ng-if="!isConnectionUnstable()" ng-click="dismissConnectionRecovery()">
++                {{'CLIENT.ACTION_DISMISS_RECOVERY' | translate}}
++            </button>
++        </div>
+     </div>
+     
+     <!-- Menu -->
+@@ -133,6 +152,12 @@
                      <h3>{{'CLIENT.SECTION_HEADER_INPUT_METHOD' | translate}}</h3>
                      <div class="content">
  
@@ -65,10 +361,211 @@ diff --git a/guacamole/src/main/frontend/src/app/client/templates/client.html b/
                          <!-- No IME -->
                          <div class="choice">
                              <label><input id="ime-none" name="input-method" ng-change="closeMenu()" ng-model="menu.inputMethod" type="radio" value="none"> {{'CLIENT.NAME_INPUT_METHOD_NONE' | translate}}</label>
+diff --git a/guacamole/src/main/frontend/src/app/client/types/ManagedClient.js b/guacamole/src/main/frontend/src/app/client/types/ManagedClient.js
+--- a/guacamole/src/main/frontend/src/app/client/types/ManagedClient.js
++++ b/guacamole/src/main/frontend/src/app/client/types/ManagedClient.js
+@@ -35,6 +35,7 @@ angular.module('client').factory('ManagedClient', ['$rootScope', '$injector',
+     const ManagedDisplay         = $injector.get('ManagedDisplay');
+     const ManagedFilesystem      = $injector.get('ManagedFilesystem');
+     const ManagedFileUpload      = $injector.get('ManagedFileUpload');
++    const ManagedFileTransferState = $injector.get('ManagedFileTransferState');
+     const ManagedShareLink       = $injector.get('ManagedShareLink');
+ 
+     // Required services
+@@ -62,6 +63,15 @@ angular.module('client').factory('ManagedClient', ['$rootScope', '$injector',
+      */
+     var THUMBNAIL_UPDATE_FREQUENCY = 5000;
+ 
++    /**
++     * Additional time that tunnel instability must persist before the user is
++     * warned, in milliseconds. The underlying tunnel timeout remains
++     * unchanged and continues to detect actual connection failure.
++     *
++     * @type Number
++     */
++    var TUNNEL_UNSTABLE_WARNING_DELAY = 3000;
++
+     /**
+      * Object which serves as a surrogate interface, encapsulating a Guacamole
+      * client while it is active, allowing it to be maintained in the
+@@ -221,6 +231,21 @@ angular.module('client').factory('ManagedClient', ['$rootScope', '$injector',
+          */
+         this.clientState = template.clientState || new ManagedClientState();
+ 
++        /**
++         * Whether a confirmed period of tunnel instability has occurred and
++         * reconnecting this client should be offered if control remains slow.
++         *
++         * @type Boolean
++         */
++        this.reconnectSuggested = template.reconnectSuggested || false;
++
++        /**
++         * Whether an automatic reconnect is currently queued for this client.
++         *
++         * @type Boolean
++         */
++        this.autoReconnectPending = false;
++
+         /**
+          * Properties associated with the display and behavior of the Guacamole
+          * client.
+@@ -390,9 +415,91 @@ angular.module('client').factory('ManagedClient', ['$rootScope', '$injector',
+             tunnel : tunnel
+         });
+ 
++        // Downstream modification: avoid showing transient instability caused
++        // by browser background throttling or short network stalls.
++        var unstableWarningTimer = null;
++
++        // ChainedTunnel forwards the active child's state without updating its
++        // own state property, so retain the latest forwarded value explicitly.
++        var currentTunnelState = Guacamole.Tunnel.State.CLOSED;
++
++        /**
++         * Cancels any pending warning that the tunnel appears unstable.
++         */
++        var cancelUnstableWarningTimer = function cancelUnstableWarningTimer() {
++            if (unstableWarningTimer !== null) {
++                $window.clearTimeout(unstableWarningTimer);
++                unstableWarningTimer = null;
++            }
++        };
++
++        /**
++         * Shows the tunnel instability warning only if the tunnel remains
++         * unstable and the page remains visible for the full grace period.
++         */
++        var scheduleUnstableWarning = function scheduleUnstableWarning() {
++
++            cancelUnstableWarningTimer();
++            ManagedClientState.setTunnelUnstable(managedClient.clientState, false);
++
++            // A background page cannot usefully display this warning. If the
++            // tunnel is still unstable on return, visibilitychange will start
++            // a fresh grace period.
++            if ($document[0].hidden)
++                return;
++
++            unstableWarningTimer = $window.setTimeout(function showUnstableWarning() {
++                unstableWarningTimer = null;
++
++                // Tunnel state and page visibility may have changed while the
++                // timer was pending. Recheck both within Angular's digest.
++                $rootScope.$evalAsync(function updateUnstableWarning() {
++                    if (currentTunnelState === Guacamole.Tunnel.State.UNSTABLE
++                            && !$document[0].hidden) {
++                        ManagedClientState.setTunnelUnstable(
++                            managedClient.clientState, true);
++                        managedClient.reconnectSuggested = true;
++                    }
++                });
++
++            }, TUNNEL_UNSTABLE_WARNING_DELAY);
++
++        };
++
++        /**
++         * Restarts the warning grace period when an unstable connection
++         * returns to a visible page, and suppresses the warning while hidden.
++         */
++        var tunnelVisibilityChanged = function tunnelVisibilityChanged() {
++            if (currentTunnelState !== Guacamole.Tunnel.State.UNSTABLE)
++                return;
++
++            $rootScope.$evalAsync(function updateUnstableWarningForVisibility() {
++                scheduleUnstableWarning();
++            });
++        };
++
++        /**
++         * Begins monitoring a persistently unstable tunnel.
++         */
++        var beginUnstableWarning = function beginUnstableWarning() {
++            $document[0].addEventListener('visibilitychange', tunnelVisibilityChanged, false);
++            scheduleUnstableWarning();
++        };
++
++        /**
++         * Clears all warning state once the tunnel changes state.
++         */
++        var endUnstableWarning = function endUnstableWarning() {
++            cancelUnstableWarningTimer();
++            $document[0].removeEventListener('visibilitychange', tunnelVisibilityChanged, false);
++            ManagedClientState.setTunnelUnstable(managedClient.clientState, false);
++        };
++
+         // Fire events for tunnel errors
+         tunnel.onerror = function tunnelError(status) {
+             $rootScope.$apply(function handleTunnelError() {
++                endUnstableWarning();
+                 ManagedClientState.setConnectionState(managedClient.clientState,
+                     ManagedClientState.ConnectionState.TUNNEL_ERROR,
+                     status.code);
+@@ -410,28 +517,31 @@ angular.module('client').factory('ManagedClient', ['$rootScope', '$injector',
+ 
+         // Update connection state as tunnel state changes
+         tunnel.onstatechange = function tunnelStateChanged(state) {
++            currentTunnelState = state;
+             $rootScope.$evalAsync(function updateTunnelState() {
+                 
+                 switch (state) {
+ 
+                     // Connection is being established
+                     case Guacamole.Tunnel.State.CONNECTING:
++                        endUnstableWarning();
+                         ManagedClientState.setConnectionState(managedClient.clientState,
+                             ManagedClientState.ConnectionState.CONNECTING);
+                         break;
+ 
+                     // Connection is established / no longer unstable
+                     case Guacamole.Tunnel.State.OPEN:
+-                        ManagedClientState.setTunnelUnstable(managedClient.clientState, false);
++                        endUnstableWarning();
+                         break;
+ 
+                     // Connection is established but misbehaving
+                     case Guacamole.Tunnel.State.UNSTABLE:
+-                        ManagedClientState.setTunnelUnstable(managedClient.clientState, true);
++                        beginUnstableWarning();
+                         break;
+ 
+                     // Connection has closed
+                     case Guacamole.Tunnel.State.CLOSED:
++                        endUnstableWarning();
+                         ManagedClientState.setConnectionState(managedClient.clientState,
+                             ManagedClientState.ConnectionState.DISCONNECTED);
+                         break;
+@@ -958,6 +1068,24 @@ angular.module('client').factory('ManagedClient', ['$rootScope', '$injector',
+         return !!(client && client.uploads && client.uploads.length);
+     };
+ 
++    /**
++     * Returns whether the given client has a file transfer which has not yet
++     * completed or failed.
++     *
++     * @param {GuacamoleClient} client
++     *     The client for which active file transfers should be checked.
++     *
++     * @returns {boolean}
++     *     true if at least one file transfer is pending or open.
++     */
++    ManagedClient.hasActiveTransfers = function hasActiveTransfers(client) {
++        return !!(client && client.uploads && _.find(client.uploads, upload => {
++            const state = upload.transferState.streamState;
++            return state === ManagedFileTransferState.StreamState.IDLE
++                || state === ManagedFileTransferState.StreamState.OPEN;
++        }));
++    };
++
+     /**
+      * Store the thumbnail of the given managed client within the connection
+      * history under its associated ID. If the client is not connected, this
 diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 --- a/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
 +++ b/guacamole/src/main/frontend/src/app/index/controllers/indexController.js
-@@ -178,3 +178,9 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+@@ -177,11 +177,17 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+ 
      // Add default destination for input events
      var sink = new Guacamole.InputSink();
 -    $document[0].body.appendChild(sink.getElement());
@@ -79,11 +576,14 @@ diff --git a/guacamole/src/main/frontend/src/app/index/controllers/indexControll
 +    sinkElement.readOnly = true;
 +    sinkElement.setAttribute('inputmode', 'none');
 +    $document[0].body.appendChild(sinkElement);
-@@ -182,3 +188,3 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
+ 
      // Create event listeners at the global level
      var keyboard = new Guacamole.Keyboard($document[0]);
 -    keyboard.listenTo(sink.getElement());
 +    keyboard.listenTo(sinkElement);
+ 
+     // Broadcast keydown events
+     keyboard.onkeydown = function onkeydown(keysym) {
 @@ -221,6 +227,8 @@ angular.module('index').controller('indexController', ['$scope', '$injector',
  
      // Release all keys when window loses focus
@@ -655,7 +1155,15 @@ diff --git a/guacamole/src/main/frontend/src/app/textInput/directives/guacTextIn
 diff --git a/guacamole/src/main/frontend/src/translations/en.json b/guacamole/src/main/frontend/src/translations/en.json
 --- a/guacamole/src/main/frontend/src/translations/en.json
 +++ b/guacamole/src/main/frontend/src/translations/en.json
-@@ -124,10 +124,13 @@
+@@ -74,6 +74,7 @@
+         "ACTION_NAVIGATE_BACK"             : "@:APP.ACTION_NAVIGATE_BACK",
+         "ACTION_NAVIGATE_HOME"             : "@:APP.ACTION_NAVIGATE_HOME",
+         "ACTION_RECONNECT"                 : "Reconnect",
++        "ACTION_DISMISS_RECOVERY"          : "Keep current session",
+         "ACTION_SAVE_FILE"                 : "@:APP.ACTION_SAVE",
+         "ACTION_SHARE"                     : "@:APP.ACTION_SHARE",
+         "ACTION_SHOW_CLIPBOARD"            : "Click to view clipboard contents.",
+@@ -124,10 +125,13 @@
  
          "FIELD_PLACEHOLDER_FILTER" : "@:APP.FIELD_PLACEHOLDER_FILTER",
  
@@ -669,10 +1177,27 @@ diff --git a/guacamole/src/main/frontend/src/translations/en.json b/guacamole/sr
          "HELP_MOUSE_MODE"          : "Determines how the remote mouse behaves with respect to touches.",
          "HELP_MOUSE_MODE_ABSOLUTE" : "Tap to click. The click occurs at the location of the touch.",
          "HELP_MOUSE_MODE_RELATIVE" : "Drag to move the mouse pointer and tap to click. The click occurs at the location of the pointer.",
+@@ -164,6 +168,8 @@
+         "TEXT_CLIENT_STATUS_CONNECTING"   : "Connecting to Guacamole...",
+         "TEXT_CLIENT_STATUS_DISCONNECTED" : "You have been disconnected.",
+         "TEXT_CLIENT_STATUS_UNSTABLE"     : "The network connection to the Guacamole server appears unstable.",
++        "TEXT_CLIENT_STATUS_RECOVERED_SLOW" : "The network connection recovered. If the display or controls remain slow, reconnect this session.",
++        "TEXT_CLIENT_STATUS_RECOVERED_RECONNECTING" : "The network connection recovered. This session will reconnect automatically to clear residual delay.",
+         "TEXT_CLIENT_STATUS_WAITING"      : "Connected to Guacamole. Waiting for response...",
+         "TEXT_USER_JOINED"                : "{USERNAME} has joined the connection.",
+         "TEXT_USER_LEFT"                  : "{USERNAME} has left the connection.",
 diff --git a/guacamole/src/main/frontend/src/translations/zh.json b/guacamole/src/main/frontend/src/translations/zh.json
 --- a/guacamole/src/main/frontend/src/translations/zh.json
 +++ b/guacamole/src/main/frontend/src/translations/zh.json
-@@ -120,10 +120,13 @@
+@@ -70,6 +70,7 @@
+         "ACTION_NAVIGATE_BACK"             : "@:APP.ACTION_NAVIGATE_BACK",
+         "ACTION_NAVIGATE_HOME"             : "@:APP.ACTION_NAVIGATE_HOME",
+         "ACTION_RECONNECT"                 : "重新连接",
++        "ACTION_DISMISS_RECOVERY"          : "保留当前连接",
+         "ACTION_SAVE_FILE"                 : "@:APP.ACTION_SAVE",
+         "ACTION_SHARE"                     : "@:APP.ACTION_SHARE",
+         "ACTION_SHOW_CLIPBOARD"            : "点击以查看剪贴板内容。",
+@@ -120,10 +121,13 @@
  
          "FIELD_PLACEHOLDER_FILTER" : "@:APP.FIELD_PLACEHOLDER_FILTER",
  
@@ -686,3 +1211,12 @@ diff --git a/guacamole/src/main/frontend/src/translations/zh.json b/guacamole/sr
          "HELP_MOUSE_MODE"          : "设置远程电脑上的鼠标对触控行为的反应。",
          "HELP_MOUSE_MODE_ABSOLUTE" : "点击时立即触发按键。在点击的位置触发鼠标按键事件。",
          "HELP_MOUSE_MODE_RELATIVE" : "拖拽时移动鼠标，再点击时触发按键。在鼠标当前所在的位置触发按键事件。",
+@@ -160,6 +164,8 @@
+         "TEXT_CLIENT_STATUS_CONNECTING"   : "正在连接 Guacamole...",
+         "TEXT_CLIENT_STATUS_DISCONNECTED" : "您的连接已断开。",
+         "TEXT_CLIENT_STATUS_UNSTABLE"     : "到 Guacamole 服务器的网络连接似乎不太稳定。",
++        "TEXT_CLIENT_STATUS_RECOVERED_SLOW" : "网络连接已经恢复。如果画面或控制仍然卡顿，请重新连接当前会话。",
++        "TEXT_CLIENT_STATUS_RECOVERED_RECONNECTING" : "网络连接已经恢复。系统将自动重新连接当前会话，以清除残留延迟。",
+         "TEXT_CLIENT_STATUS_WAITING"      : "已连接到 Guacamole。正在等待应答...",
+         "TEXT_USER_JOINED"                : "用户 {USERNAME} 已加入连接。",
+         "TEXT_USER_LEFT"                  : "用户 {USERNAME} 断开了连接。",

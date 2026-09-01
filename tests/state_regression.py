@@ -190,6 +190,105 @@ class RemoteKeyboardState:
         return self.keydown(force_recovery=True)
 
 
+class UnstableWarningState:
+    """Model the UI grace period layered over tunnel instability."""
+
+    WARNING_DELAY = 3000
+    AUTO_RECONNECT_DELAY = 5000
+    AUTO_RECONNECT_MAX_ATTEMPTS = 2
+    AUTO_RECONNECT_RESET_DELAY = 60000
+
+    def __init__(self) -> None:
+        self.now = 0
+        self.hidden = False
+        self.tunnel_state = "open"
+        self.warning_visible = False
+        self.warning_due: int | None = None
+        self.reconnect_suggested = False
+        self.active_transfer = False
+        self.auto_reconnect_due: int | None = None
+        self.auto_reconnect_attempts = 0
+        self.auto_reconnects = 0
+        self.attempt_reset_due: int | None = None
+
+    def schedule_warning(self) -> None:
+        self.warning_visible = False
+        self.warning_due = None
+        if not self.hidden:
+            self.warning_due = self.now + self.WARNING_DELAY
+
+    def set_tunnel_state(self, state: str) -> None:
+        self.tunnel_state = state
+        if state == "unstable":
+            self.auto_reconnect_due = None
+            self.attempt_reset_due = None
+            self.schedule_warning()
+        else:
+            self.warning_visible = False
+            self.warning_due = None
+            if state == "open":
+                self.queue_auto_reconnect()
+                if self.auto_reconnect_attempts:
+                    self.attempt_reset_due = self.now + self.AUTO_RECONNECT_RESET_DELAY
+            else:
+                self.auto_reconnect_due = None
+
+    def set_hidden(self, hidden: bool) -> None:
+        self.hidden = hidden
+        if self.tunnel_state == "unstable":
+            self.schedule_warning()
+
+    def advance(self, milliseconds: int) -> None:
+        self.now += milliseconds
+        if self.warning_due is not None and self.now >= self.warning_due:
+            self.warning_due = None
+            if self.tunnel_state == "unstable" and not self.hidden:
+                self.warning_visible = True
+                self.reconnect_suggested = True
+
+        if self.auto_reconnect_due is not None and self.now >= self.auto_reconnect_due:
+            self.auto_reconnect_due = None
+            if self.can_auto_reconnect():
+                self.auto_reconnect_attempts += 1
+                self.auto_reconnects += 1
+                self.reconnect_suggested = False
+                self.attempt_reset_due = self.now + self.AUTO_RECONNECT_RESET_DELAY
+
+        if self.attempt_reset_due is not None and self.now >= self.attempt_reset_due:
+            self.attempt_reset_due = None
+            if self.tunnel_state == "open":
+                self.auto_reconnect_attempts = 0
+
+    def can_auto_reconnect(self) -> bool:
+        return (
+            self.recovery_available()
+            and self.tunnel_state == "open"
+            and not self.active_transfer
+        )
+
+    def queue_auto_reconnect(self) -> None:
+        if (
+            self.can_auto_reconnect()
+            and self.auto_reconnect_attempts < self.AUTO_RECONNECT_MAX_ATTEMPTS
+        ):
+            delay = self.AUTO_RECONNECT_DELAY * (2 ** self.auto_reconnect_attempts)
+            self.auto_reconnect_due = self.now + delay
+
+    def set_active_transfer(self, active: bool) -> None:
+        self.active_transfer = active
+        if active:
+            self.auto_reconnect_due = None
+        else:
+            self.queue_auto_reconnect()
+
+    def dismiss_recovery(self) -> None:
+        self.auto_reconnect_due = None
+        self.reconnect_suggested = False
+
+    def recovery_available(self) -> bool:
+        return self.reconnect_suggested and self.tunnel_state in {"open", "unstable"}
+
+
 def main() -> None:
     # compositionend missing during tab switch must not permanently block input
     state = TextInputState()
@@ -336,7 +435,97 @@ def main() -> None:
     assert menu_action.sink_focused is True
     assert menu_action.restore_pending_user_gesture is False
 
-    print("输入法、焦点所有权、修饰键和竞态状态回归测试通过。")
+    # A brief unstable state must recover without flashing a warning.
+    brief_stall = UnstableWarningState()
+    brief_stall.set_tunnel_state("unstable")
+    brief_stall.advance(UnstableWarningState.WARNING_DELAY - 1)
+    assert brief_stall.warning_visible is False
+    brief_stall.set_tunnel_state("open")
+    brief_stall.advance(1)
+    assert brief_stall.warning_visible is False
+    assert brief_stall.reconnect_suggested is False
+
+    # A sustained visible disruption must still warn before tunnel timeout.
+    sustained_stall = UnstableWarningState()
+    sustained_stall.set_tunnel_state("unstable")
+    sustained_stall.advance(UnstableWarningState.WARNING_DELAY)
+    assert sustained_stall.warning_visible is True
+    assert sustained_stall.reconnect_suggested is True
+    sustained_stall.set_tunnel_state("open")
+    assert sustained_stall.warning_visible is False
+    assert sustained_stall.reconnect_suggested is True
+    assert sustained_stall.recovery_available() is True
+    sustained_stall.set_tunnel_state("closed")
+    assert sustained_stall.recovery_available() is False
+    sustained_stall.dismiss_recovery()
+    assert sustained_stall.reconnect_suggested is False
+
+    # Background throttling must not produce a warning immediately on return.
+    background_stall = UnstableWarningState()
+    background_stall.set_hidden(True)
+    background_stall.set_tunnel_state("unstable")
+    background_stall.advance(15000)
+    assert background_stall.warning_visible is False
+    background_stall.set_hidden(False)
+    background_stall.advance(UnstableWarningState.WARNING_DELAY - 1)
+    assert background_stall.warning_visible is False
+    background_stall.advance(1)
+    assert background_stall.warning_visible is True
+
+    # Hiding the page also clears a warning that was already visible.
+    background_stall.set_hidden(True)
+    assert background_stall.warning_visible is False
+    assert background_stall.warning_due is None
+
+    # A confirmed disruption that recovers queues one bounded reconnect after
+    # the initial stable delay.
+    auto_recovery = UnstableWarningState()
+    auto_recovery.set_tunnel_state("unstable")
+    auto_recovery.advance(UnstableWarningState.WARNING_DELAY)
+    auto_recovery.set_tunnel_state("open")
+    auto_recovery.advance(UnstableWarningState.AUTO_RECONNECT_DELAY - 1)
+    assert auto_recovery.auto_reconnects == 0
+    auto_recovery.advance(1)
+    assert auto_recovery.auto_reconnects == 1
+    assert auto_recovery.auto_reconnect_attempts == 1
+    assert auto_recovery.reconnect_suggested is False
+
+    # A second disruption backs off, while a third consecutive disruption is
+    # left for manual recovery instead of entering a reconnect loop.
+    auto_recovery.set_tunnel_state("unstable")
+    auto_recovery.advance(UnstableWarningState.WARNING_DELAY)
+    auto_recovery.set_tunnel_state("open")
+    auto_recovery.advance(UnstableWarningState.AUTO_RECONNECT_DELAY * 2)
+    assert auto_recovery.auto_reconnects == 2
+    assert auto_recovery.auto_reconnect_attempts == 2
+    auto_recovery.set_tunnel_state("unstable")
+    auto_recovery.advance(UnstableWarningState.WARNING_DELAY)
+    auto_recovery.set_tunnel_state("open")
+    assert auto_recovery.auto_reconnect_due is None
+    auto_recovery.advance(UnstableWarningState.AUTO_RECONNECT_DELAY * 4)
+    assert auto_recovery.auto_reconnects == 2
+
+    # A continuous stable minute resets the retry budget for a future event.
+    auto_recovery.advance(UnstableWarningState.AUTO_RECONNECT_RESET_DELAY)
+    assert auto_recovery.auto_reconnect_attempts == 0
+
+    # Active transfers and an explicit request to keep the current session both
+    # cancel automatic reconnect without clearing the manual recovery path.
+    transfer_guard = UnstableWarningState()
+    transfer_guard.set_tunnel_state("unstable")
+    transfer_guard.advance(UnstableWarningState.WARNING_DELAY)
+    transfer_guard.set_tunnel_state("open")
+    transfer_guard.set_active_transfer(True)
+    transfer_guard.advance(UnstableWarningState.AUTO_RECONNECT_DELAY * 2)
+    assert transfer_guard.auto_reconnects == 0
+    assert transfer_guard.reconnect_suggested is True
+    transfer_guard.set_active_transfer(False)
+    assert transfer_guard.auto_reconnect_due is not None
+    transfer_guard.dismiss_recovery()
+    transfer_guard.advance(UnstableWarningState.AUTO_RECONNECT_DELAY)
+    assert transfer_guard.auto_reconnects == 0
+
+    print("输入法、焦点所有权、修饰键、网络提示、自动重连和竞态状态回归测试通过。")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@
 拉取已经构建好的镜像：
 
 ```bash
-docker pull ghcr.io/trilogys/guacamole_patch:1.6.0
+docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
 ```
 
 在 Docker Compose 中使用：
@@ -19,7 +19,7 @@ docker pull ghcr.io/trilogys/guacamole_patch:1.6.0
 ```yaml
 services:
   guacamole:
-    image: ghcr.io/trilogys/guacamole_patch:1.6.0
+    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
 ```
 
 只更新 Guacamole Web 容器：
@@ -35,7 +35,8 @@ Docker 会复用没有变化的镜像层，后续拉取通常只下载发生变�
 
 ## 镜像标签
 
-- `1.6.0`：当前发布镜像，每次正式构建都会更新这个标签。
+- `1.6.0-recovery1`：本补丁包对应的具名恢复版本。
+- `1.6.0`：当前滚动发布镜像，每次正式构建都会更新这个标签。
 - `main`：由 `main` 分支最新代码构建。
 - `sha-<commit>`：对应特定源码提交的固定标签，适合精确部署和回滚。
 - `dev`：由 `dev` 分支构建的开发镜像。
@@ -67,14 +68,25 @@ RDP 键盘布局：en-us-qwerty
 
 仍可通过 `Ctrl+Alt+K` 或菜单中的“重新捕获键盘”进行手动恢复。
 
+### 短暂网络提示
+
+Guacamole 原本在大约 1.5 秒未收到隧道数据后就把连接标记为不稳定。补丁会额外确认 3 秒，只有页面可见且异常持续存在时才显示提示；页面隐藏期间不显示，返回页面后重新开始确认。
+
+底层不稳定检测和 15 秒接收超时保持不变。真实且持续的网络或服务器故障仍会正常提示并断开连接。
+
+发生过确认的网络异常后，网络数据稳定恢复 5 秒时会自动仅重建受影响的远程连接。短期内第二次异常使用 10 秒退避，连续自动尝试最多两次；稳定运行一分钟后重置尝试次数。
+
+隧道再次不稳定、存在进行中的文件传输或用户选择“保留当前连接”时，会取消待执行的自动重连。达到自动尝试上限或控制仍然卡顿时仍可手动“重新连接”。Guacamole 登录态、页面地址和未受影响的平铺连接都会保留。
+
 ## GitHub Actions 构建
 
-进入 **Actions → Build and publish Guacamole image → Run workflow**，选择 `main` 后运行。
+进入 **Actions → Build and publish Guacamole recovery image → Run workflow**，选择 `main` 后运行。
 
 构建成功会发布：
 
 ```text
 ghcr.io/trilogys/guacamole_patch:1.6.0
+ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
 ghcr.io/trilogys/guacamole_patch:main
 ghcr.io/trilogys/guacamole_patch:sha-<commit>
 ```
@@ -99,7 +111,7 @@ mktemp
 git clone https://github.com/trilogys/guacamole_patch.git
 cd guacamole_patch
 
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" \
 bash ./build.sh
 ```
 
@@ -107,7 +119,7 @@ bash ./build.sh
 
 ```bash
 MAVEN_ARGUMENTS="-T 1C -Dmaven.test.skip=true" \
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" \
 bash ./build.sh
 ```
 
@@ -116,14 +128,14 @@ bash ./build.sh
 ## 验证镜像
 
 ```bash
-docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0 \
-  --format '{{index .Config.Labels "io.guacamole.inputfix.patch-sha256"}}'
+docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1 \
+  --format '{{index .Config.Labels "io.guacamole.recovery.patch-sha256"}}'
 ```
 
 预期补丁 SHA-256：
 
 ```text
-28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c
+604f96ead825f2ac3200cd4d38cf3c08c2218d9d405d65de9d40a0593658459a
 ```
 
 ## 验收测试

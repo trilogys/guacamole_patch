@@ -11,7 +11,7 @@ This repository is not an official Apache Software Foundation release.
 Pull the published image:
 
 ```bash
-docker pull ghcr.io/trilogys/guacamole_patch:1.6.0
+docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
 ```
 
 Use it in Docker Compose:
@@ -19,7 +19,7 @@ Use it in Docker Compose:
 ```yaml
 services:
   guacamole:
-    image: ghcr.io/trilogys/guacamole_patch:1.6.0
+    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
 ```
 
 Update only the Guacamole web container:
@@ -35,7 +35,8 @@ Docker reuses unchanged layers, so later pulls normally download only changed la
 
 ## Published image tags
 
-- `1.6.0`: current release image; this tag is updated on each release build.
+- `1.6.0-recovery1`: named recovery release documented by this package.
+- `1.6.0`: current moving release image; this tag is updated on each release build.
 - `main`: latest image built from the `main` branch.
 - `sha-<commit>`: immutable tag for a specific source commit.
 - `dev`: development image built from the `dev` branch.
@@ -67,14 +68,25 @@ The patch resets recorded key state when the page is hidden, restores keyboard c
 
 Manual recovery remains available through `Ctrl+Alt+K` and the **Recover keyboard capture** menu action.
 
+### Transient network warning
+
+Guacamole normally marks a tunnel unstable after roughly 1.5 seconds without inbound data. The patch waits for three additional seconds of continuous, visible-page instability before showing the warning. It suppresses the warning while the page is hidden and starts a fresh grace period when the page returns.
+
+The underlying instability detector and 15-second receive timeout are unchanged. Sustained network or server failures are still reported and disconnected normally.
+
+After a confirmed unstable period, recovery automatically rebuilds only the affected remote connection after network traffic remains stable for five seconds. A second consecutive attempt waits ten seconds, and recovery stops after two attempts to prevent loops. One stable minute resets the retry budget.
+
+Automatic reconnect is cancelled if the tunnel becomes unstable again, a file transfer is active, or **Keep current session** is selected. Manual **Reconnect** remains available when controls are still delayed or the automatic retry limit has been reached. The Guacamole login, page route, and unaffected tiled connections are preserved.
+
 ## GitHub Actions build
 
-Open **Actions → Build and publish Guacamole image → Run workflow**, select `main`, and run the workflow.
+Open **Actions → Build and publish Guacamole recovery image → Run workflow**, select `main`, and run the workflow.
 
 A successful build publishes:
 
 ```text
 ghcr.io/trilogys/guacamole_patch:1.6.0
+ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
 ghcr.io/trilogys/guacamole_patch:main
 ghcr.io/trilogys/guacamole_patch:sha-<commit>
 ```
@@ -99,7 +111,7 @@ Clone and build:
 git clone https://github.com/trilogys/guacamole_patch.git
 cd guacamole_patch
 
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" \
 bash ./build.sh
 ```
 
@@ -107,7 +119,7 @@ For a faster troubleshooting build:
 
 ```bash
 MAVEN_ARGUMENTS="-T 1C -Dmaven.test.skip=true" \
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" \
 bash ./build.sh
 ```
 
@@ -116,14 +128,14 @@ bash ./build.sh
 ## Verify the image
 
 ```bash
-docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0 \
-  --format '{{index .Config.Labels "io.guacamole.inputfix.patch-sha256"}}'
+docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1 \
+  --format '{{index .Config.Labels "io.guacamole.recovery.patch-sha256"}}'
 ```
 
 Expected patch SHA-256:
 
 ```text
-28b7224360f9bbd56933e465feff55a6df146c06d5e7ef91e8ffbebd5b9f2e7c
+604f96ead825f2ac3200cd4d38cf3c08c2218d9d405d65de9d40a0593658459a
 ```
 
 ## Acceptance testing

@@ -23,14 +23,21 @@ def main() -> int:
     root = Path(sys.argv[1]).resolve()
     text_input = (root / "guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js").read_text(encoding="utf-8")
     tiled = (root / "guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js").read_text(encoding="utf-8")
+    managed = (root / "guacamole/src/main/frontend/src/app/client/types/ManagedClient.js").read_text(encoding="utf-8")
     index = (root / "guacamole/src/main/frontend/src/app/index/controllers/indexController.js").read_text(encoding="utf-8")
     client = (root / "guacamole/src/main/frontend/src/app/client/controllers/clientController.js").read_text(encoding="utf-8")
     client_template = (root / "guacamole/src/main/frontend/src/app/client/templates/client.html").read_text(encoding="utf-8")
+    connection_warning = (root / "guacamole/src/main/frontend/src/app/client/styles/connection-warning.css").read_text(encoding="utf-8")
     en = (root / "guacamole/src/main/frontend/src/translations/en.json").read_text(encoding="utf-8")
     zh = (root / "guacamole/src/main/frontend/src/translations/zh.json").read_text(encoding="utf-8")
 
     # All modified source files carry an explicit downstream modification notice.
-    for text, label in [(text_input, "guacTextInput"), (tiled, "guacTiledClients"), (index, "indexController")]:
+    for text, label in [
+        (text_input, "guacTextInput"),
+        (tiled, "guacTiledClients"),
+        (managed, "ManagedClient"),
+        (index, "indexController"),
+    ]:
         require(text, "Downstream modification:", f"{label} 修改声明")
 
     # Local text-input mode
@@ -105,17 +112,52 @@ def main() -> int:
     require(tiled, "guacKeyboardFocusRequested", "接收原始键盘焦点请求")
     require(tiled, "ManagedClientGroup.verifyFocus", "恢复客户端焦点")
 
+    # Transient tunnel instability / background throttling
+    require(managed, "TUNNEL_UNSTABLE_WARNING_DELAY = 3000", "网络提示确认窗口")
+    require(managed, "currentTunnelState", "跟踪 ChainedTunnel 转发的实际状态")
+    require(managed, "scheduleUnstableWarning", "短暂异常提示防抖")
+    require(managed, "$document[0].hidden", "后台页面不显示网络误报")
+    require(managed, "tunnelVisibilityChanged", "页面恢复后重新确认异常")
+    require(managed, "endUnstableWarning", "恢复或断线时清理提示状态")
+    require(managed, "reconnectSuggested", "持续异常后保留重连建议")
+    require(managed, "hasActiveTransfers", "自动重连保护进行中的文件传输")
+    require(managed, "ManagedFileTransferState.StreamState.OPEN", "识别活动文件流")
+    forbid(managed, "tunnel.unstableThreshold =", "不得削弱底层不稳定检测阈值")
+    forbid(managed, "tunnel.receiveTimeout =", "不得延长底层断线超时")
+
     # The client controller may request recovery but must not own keyboard/sink.
     require(client, "recoverKeyboardInput", "客户端菜单恢复入口")
     require(client, "$scope.$emit('guacForceInputRecovery')", "菜单向全局键盘控制器请求恢复")
     require(client, "$scope.$on('guacToggleMenuRequested'", "失效键盘恢复后直接切换菜单")
     require(client, "$scope.menu.shown = !$scope.menu.shown", "保留原生菜单开关语义")
+    require(client, "isConnectionRecoveryAvailable", "恢复后显示重连入口")
+    require(client, "ManagedClientState.ConnectionState.CONNECTED", "仅活动连接提供重连")
+    require(client, "reconnectDegradedClients", "仅重建异常连接")
+    require(client, "guacClientManager.replaceManagedClient", "使用上游连接替换路径")
+    require(client, "dismissConnectionRecovery", "允许关闭重连建议")
+    require(client, "AUTO_RECONNECT_DELAY = 5000", "首次自动重连稳定窗口")
+    require(client, "AUTO_RECONNECT_MAX_ATTEMPTS = 2", "自动重连次数上限")
+    require(client, "AUTO_RECONNECT_RESET_DELAY = 60000", "稳定后重置尝试次数")
+    require(client, "queueAutoReconnect", "自动重连排队")
+    require(client, "cancelAutoReconnect", "自动重连取消")
+    require(client, "scheduleAutoReconnectReset", "连续稳定窗口重置")
+    require(client, "ManagedClient.hasActiveTransfers", "文件传输期间不自动重连")
+    require(client, "$scope.$watchCollection", "监听网络和传输状态")
     require(client_template, "CLIENT.ACTION_RECOVER_KEYBOARD", "菜单恢复按钮")
     require(client_template, "recoverKeyboardInput()", "菜单恢复按钮绑定")
     require(en, '"ACTION_RECOVER_KEYBOARD" : "Recapture keyboard"', "英文恢复按钮")
     require(zh, '"ACTION_RECOVER_KEYBOARD" : "重新捕获键盘"', "中文恢复按钮")
     require(en, "Ctrl-Alt-K", "英文恢复热键提示")
     require(zh, "Ctrl-Alt-K", "中文恢复热键提示")
+    require(client_template, "CLIENT.TEXT_CLIENT_STATUS_RECOVERED_SLOW", "恢复后卡顿提示")
+    require(client_template, "CLIENT.TEXT_CLIENT_STATUS_RECOVERED_RECONNECTING", "自动重连提示")
+    require(client_template, "isAutomaticReconnectPending()", "自动重连状态绑定")
+    require(client_template, "reconnectDegradedClients()", "网络提示重连按钮")
+    require(client_template, "dismissConnectionRecovery()", "网络提示关闭按钮")
+    require(en, '"ACTION_DISMISS_RECOVERY"', "英文关闭提示按钮")
+    require(zh, '"ACTION_DISMISS_RECOVERY"', "中文关闭提示按钮")
+    require(connection_warning, "#connection-warning .actions", "网络提示操作布局")
+    forbid(client, "$window.location.reload", "自动恢复不得刷新整个页面")
     require(text_input, "isVisibleLocalInput", "只保护真正的本地输入控件")
     forbid(text_input, "focusedRect", "不得把任意可见远程元素误判成本地输入控件")
 

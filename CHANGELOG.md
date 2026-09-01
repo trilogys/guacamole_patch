@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.0-recovery1
+
+- Debounce the visible tunnel-instability warning and suppress false warnings while the page is hidden.
+- Automatically rebuild only affected connections after confirmed instability recovers, using bounded exponential backoff.
+- Cancel pending automatic recovery when instability returns, a file transfer is active, or the user keeps the current session.
+- Preserve the manual reconnect action after the retry limit while retaining the Guacamole login, route, and unaffected tiled connections.
+- Keep Guacamole's original instability detector and 15-second receive timeout unchanged.
+- Add regression coverage for brief stalls, sustained stalls, background throttling, transfer protection, retry limits, and stable-period reset.
+
 ## 1.6.0-inputfix7
 
 - Make raw-keyboard mode authoritative by preventing the hidden input sink from accepting local IME composition text.

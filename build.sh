@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SUPPORTED_VERSION="1.6.0"
 GUACAMOLE_VERSION="${GUACAMOLE_VERSION:-${SUPPORTED_VERSION}}"
-IMAGE_NAME="${IMAGE_NAME:-trilogys/guacamole:${GUACAMOLE_VERSION}}"
+IMAGE_NAME="${IMAGE_NAME:-ghcr.io/trilogys/guacamole_patch:${GUACAMOLE_VERSION}-recovery1}"
 MAVEN_ARGUMENTS="${MAVEN_ARGUMENTS:--DskipTests=false}"
 PULL_BASE_IMAGES="${PULL_BASE_IMAGES:-false}"
 KEEP_WORK_DIR="${KEEP_WORK_DIR:-false}"
@@ -102,16 +102,17 @@ if command -v node >/dev/null 2>&1; then
     node --check "${SOURCE_DIR}/guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js"
     node --check "${SOURCE_DIR}/guacamole/src/main/frontend/src/app/client/controllers/clientController.js"
     node --check "${SOURCE_DIR}/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js"
+    node --check "${SOURCE_DIR}/guacamole/src/main/frontend/src/app/client/types/ManagedClient.js"
     node --check "${SOURCE_DIR}/guacamole/src/main/frontend/src/app/index/controllers/indexController.js"
 fi
 
 DOCKER_BUILD_ARGS=(
     --build-arg "MAVEN_ARGUMENTS=${MAVEN_ARGUMENTS}"
-    --label "org.opencontainers.image.title=Apache Guacamole with tab-switch input fix"
-    --label "org.opencontainers.image.version=${GUACAMOLE_VERSION}-inputfix7"
+    --label "org.opencontainers.image.title=Apache Guacamole with input and network recovery"
+    --label "org.opencontainers.image.version=${GUACAMOLE_VERSION}-recovery1"
     --label "org.opencontainers.image.source=https://github.com/apache/guacamole-client"
     --label "org.opencontainers.image.licenses=Apache-2.0"
-    --label "io.guacamole.inputfix.patch-sha256=${PATCH_SHA256}"
+    --label "io.guacamole.recovery.patch-sha256=${PATCH_SHA256}"
     --tag "${IMAGE_NAME}"
 )
 if [[ "${PULL_BASE_IMAGES}" == "true" ]]; then

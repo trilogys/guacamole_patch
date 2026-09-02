@@ -11,7 +11,7 @@ This repository is not an official Apache Software Foundation release.
 Pull the published image:
 
 ```bash
-docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
+docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
 ```
 
 Use it in Docker Compose:
@@ -19,7 +19,7 @@ Use it in Docker Compose:
 ```yaml
 services:
   guacamole:
-    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
+    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
 ```
 
 Update only the Guacamole web container:
@@ -35,7 +35,8 @@ Docker reuses unchanged layers, so later pulls normally download only changed la
 
 ## Published image tags
 
-- `1.6.0-recovery1`: named recovery release documented by this package.
+- `1.6.0-recovery2`: current named recovery release documented by this package.
+- `1.6.0-recovery1`: previous recovery release retained for rollback.
 - `1.6.0`: current moving release image; this tag is updated on each release build.
 - `main`: latest image built from the `main` branch.
 - `sha-<commit>`: immutable tag for a specific source commit.
@@ -78,6 +79,10 @@ After a confirmed unstable period, recovery automatically rebuilds only the affe
 
 Automatic reconnect is cancelled if the tunnel becomes unstable again, a file transfer is active, or **Keep current session** is selected. Manual **Reconnect** remains available when controls are still delayed or the automatic retry limit has been reached. The Guacamole login, page route, and unaffected tiled connections are preserved.
 
+### Mouse response under weak networks
+
+High-frequency mouse movement is coalesced to the latest position at roughly 30 Hz. Button presses, releases, right-clicks, wheel events, and drag endpoints flush the latest position first and are sent immediately, preventing clicks from waiting behind stale movement. Pending movement is discarded when the connection is replaced.
+
 ## GitHub Actions build
 
 Open **Actions → Build and publish Guacamole recovery image → Run workflow**, select `main`, and run the workflow.
@@ -86,7 +91,7 @@ A successful build publishes:
 
 ```text
 ghcr.io/trilogys/guacamole_patch:1.6.0
-ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1
+ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
 ghcr.io/trilogys/guacamole_patch:main
 ghcr.io/trilogys/guacamole_patch:sha-<commit>
 ```
@@ -111,7 +116,7 @@ Clone and build:
 git clone https://github.com/trilogys/guacamole_patch.git
 cd guacamole_patch
 
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2" \
 bash ./build.sh
 ```
 
@@ -119,7 +124,7 @@ For a faster troubleshooting build:
 
 ```bash
 MAVEN_ARGUMENTS="-T 1C -Dmaven.test.skip=true" \
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2" \
 bash ./build.sh
 ```
 
@@ -128,14 +133,14 @@ bash ./build.sh
 ## Verify the image
 
 ```bash
-docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery1 \
+docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2 \
   --format '{{index .Config.Labels "io.guacamole.recovery.patch-sha256"}}'
 ```
 
 Expected patch SHA-256:
 
 ```text
-604f96ead825f2ac3200cd4d38cf3c08c2218d9d405d65de9d40a0593658459a
+2ca476a390419888796cc589c16325f8aab8591e81eb04d71451b447eba82f80
 ```
 
 ## Acceptance testing

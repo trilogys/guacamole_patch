@@ -24,6 +24,7 @@ def main() -> int:
     text_input = (root / "guacamole/src/main/frontend/src/app/textInput/directives/guacTextInput.js").read_text(encoding="utf-8")
     tiled = (root / "guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js").read_text(encoding="utf-8")
     managed = (root / "guacamole/src/main/frontend/src/app/client/types/ManagedClient.js").read_text(encoding="utf-8")
+    mouse_client = (root / "guacamole/src/main/frontend/src/app/client/directives/guacClient.js").read_text(encoding="utf-8")
     index = (root / "guacamole/src/main/frontend/src/app/index/controllers/indexController.js").read_text(encoding="utf-8")
     client = (root / "guacamole/src/main/frontend/src/app/client/controllers/clientController.js").read_text(encoding="utf-8")
     client_template = (root / "guacamole/src/main/frontend/src/app/client/templates/client.html").read_text(encoding="utf-8")
@@ -36,6 +37,7 @@ def main() -> int:
         (text_input, "guacTextInput"),
         (tiled, "guacTiledClients"),
         (managed, "ManagedClient"),
+        (mouse_client, "guacClient"),
         (index, "indexController"),
     ]:
         require(text, "Downstream modification:", f"{label} 修改声明")
@@ -111,6 +113,18 @@ def main() -> int:
     require(tiled, "guacTextInputFocusRequested", "接收文本输入焦点请求")
     require(tiled, "guacKeyboardFocusRequested", "接收原始键盘焦点请求")
     require(tiled, "ManagedClientGroup.verifyFocus", "恢复客户端焦点")
+
+    # Mouse movement coalescing / lossless button transitions
+    require(mouse_client, "MOUSE_MOVE_INTERVAL = 33", "鼠标移动发送频率上限")
+    require(mouse_client, "copyMouseState", "复制浏览器可能复用的鼠标状态")
+    require(mouse_client, "pendingMouseMove", "只保留最新待发送移动")
+    require(mouse_client, "flushPendingMouseMove", "点击前刷新最后坐标")
+    require(mouse_client, "cancelPendingMouseMove", "切换连接时清理旧移动")
+    require(mouse_client, "event.type !== 'mousemove'", "按钮状态不进入移动合并")
+    require(mouse_client, "client.sendMouseState(event.state, true);", "按钮状态立即发送")
+    require(mouse_client, "$scope.$on('$destroy', cancelPendingMouseMove)", "销毁时清理移动计时器")
+    if mouse_client.count("sendMouseEventState(event);") < 2:
+        raise AssertionError("物理鼠标和模拟鼠标必须共用安全的移动合并逻辑")
 
     # Transient tunnel instability / background throttling
     require(managed, "TUNNEL_UNSTABLE_WARNING_DELAY = 3000", "网络提示确认窗口")

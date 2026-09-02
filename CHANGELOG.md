@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0-recovery2
+
+- Coalesce high-frequency physical and emulated mouse movement to the latest state at roughly 30 Hz.
+- Flush the latest pending position before every mouse button transition so clicks, releases, wheel events, and drag endpoints are never delayed behind stale movement.
+- Copy queued mouse state and clear it when the managed client changes or the directive is destroyed.
+- Add regression coverage for movement collapse, immutable queued state, click ordering, drag release, and connection replacement.
+
 ## 1.6.0-recovery1
 
 - Debounce the visible tunnel-instability warning and suppress false warnings while the page is hidden.

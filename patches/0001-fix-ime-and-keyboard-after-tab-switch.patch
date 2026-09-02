@@ -270,6 +270,139 @@ diff --git a/guacamole/src/main/frontend/src/app/client/controllers/clientContro
          setAttachedGroup(null);
  
          // always unset fullscreen mode to not confuse user 
+diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacClient.js b/guacamole/src/main/frontend/src/app/client/directives/guacClient.js
+--- a/guacamole/src/main/frontend/src/app/client/directives/guacClient.js
++++ b/guacamole/src/main/frontend/src/app/client/directives/guacClient.js
+@@ -100,6 +100,91 @@ angular.module('client').directive('guacClient', [function guacClient() {
+          */
+         const main = $element[0];
+ 
++        // Downstream modification: coalesce high-frequency mouse movement so
++        // clicks cannot become trapped behind stale movement during weak
++        // network conditions.
++
++        /**
++         * Minimum time between transmitted mouse movement states, in
++         * milliseconds. Button transitions are never delayed.
++         *
++         * @type Number
++         */
++        const MOUSE_MOVE_INTERVAL = 33;
++
++        /**
++         * Most recent mouse movement waiting to be sent, if any.
++         *
++         * @type Object|null
++         */
++        let pendingMouseMove = null;
++
++        /**
++         * Timeout ID of a queued mouse movement, or null if none is queued.
++         *
++         * @type Number|null
++         */
++        let pendingMouseMoveTimer = null;
++
++        /**
++         * Creates an independent copy of the given mouse state. Guacamole's
++         * mouse event objects may be reused after the event handler returns.
++         */
++        const copyMouseState = function copyMouseState(state) {
++            return {
++                x      : state.x,
++                y      : state.y,
++                left   : state.left,
++                middle : state.middle,
++                right  : state.right,
++                up     : state.up,
++                down   : state.down
++            };
++        };
++
++        /**
++         * Immediately sends the latest queued mouse movement, if any.
++         */
++        const flushPendingMouseMove = function flushPendingMouseMove() {
++            if (pendingMouseMoveTimer !== null) {
++                $window.clearTimeout(pendingMouseMoveTimer);
++                pendingMouseMoveTimer = null;
++            }
++
++            const state = pendingMouseMove;
++            pendingMouseMove = null;
++            if (state && client)
++                client.sendMouseState(state, true);
++        };
++
++        /**
++         * Cancels any queued mouse movement without sending it.
++         */
++        const cancelPendingMouseMove = function cancelPendingMouseMove() {
++            if (pendingMouseMoveTimer !== null)
++                $window.clearTimeout(pendingMouseMoveTimer);
++            pendingMouseMoveTimer = null;
++            pendingMouseMove = null;
++        };
++
++        /**
++         * Coalesces mouse movement while forwarding all button transitions
++         * immediately and in the correct position.
++         */
++        const sendMouseEventState = function sendMouseEventState(event) {
++            if (event.type !== 'mousemove') {
++                flushPendingMouseMove();
++                client.sendMouseState(event.state, true);
++                return;
++            }
++
++            pendingMouseMove = copyMouseState(event.state);
++            if (pendingMouseMoveTimer === null) {
++                pendingMouseMoveTimer = $window.setTimeout(
++                    flushPendingMouseMove, MOUSE_MOVE_INTERVAL);
++            }
++        };
++
+         /**
+          * Guacamole mouse event object, wrapped around the main client
+          * display.
+@@ -241,7 +326,7 @@ angular.module('client').directive('guacClient', [function guacClient() {
+ 
+             // Send mouse state, show cursor if necessary
+             display.showCursor(!localCursor);
+-            client.sendMouseState(event.state, true);
++            sendMouseEventState(event);
+ 
+             // Broadcast the mouse event
+             $rootScope.$broadcast(getMouseEventName(event), event, client);
+@@ -272,7 +357,7 @@ angular.module('client').directive('guacClient', [function guacClient() {
+ 
+             // Send mouse state, ensure cursor is visible
+             scrollToMouse(event.state);
+-            client.sendMouseState(event.state, true);
++            sendMouseEventState(event);
+ 
+             // Broadcast the mouse event
+             $rootScope.$broadcast(getMouseEventName(event), event, client);
+@@ -328,6 +413,9 @@ angular.module('client').directive('guacClient', [function guacClient() {
+         // Attach any given managed client
+         $scope.$watch('client', function attachManagedClient(managedClient) {
+ 
++            // Never forward a movement queued for the previous connection.
++            cancelPendingMouseMove();
++
+             // Remove any existing display
+             displayContainer.innerHTML = "";
+ 
+@@ -562,6 +650,9 @@ angular.module('client').directive('guacClient', [function guacClient() {
+         // Forward all mouse events
+         mouse.onEach(['mousedown', 'mousemove', 'mouseup'], handleMouseEvent);
+ 
++        // Prevent queued movement from surviving directive teardown.
++        $scope.$on('$destroy', cancelPendingMouseMove);
++
+         // Hide software cursor when mouse leaves display
+         mouse.on('mouseout', function() {
+             if (!display) return;
 diff --git a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 --- a/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js
 +++ b/guacamole/src/main/frontend/src/app/client/directives/guacTiledClients.js

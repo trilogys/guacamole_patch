@@ -190,6 +190,44 @@ class RemoteKeyboardState:
         return self.keydown(force_recovery=True)
 
 
+class MouseInputState:
+    """Model coalesced movement with lossless button transitions."""
+
+    MOVE_INTERVAL = 33
+
+    def __init__(self) -> None:
+        self.now = 0
+        self.pending_move: dict[str, int | bool] | None = None
+        self.move_due: int | None = None
+        self.sent: list[tuple[str, dict[str, int | bool]]] = []
+
+    def flush_move(self) -> None:
+        self.move_due = None
+        if self.pending_move is not None:
+            self.sent.append(("mousemove", self.pending_move))
+            self.pending_move = None
+
+    def event(self, event_type: str, state: dict[str, int | bool]) -> None:
+        copied_state = dict(state)
+        if event_type != "mousemove":
+            self.flush_move()
+            self.sent.append((event_type, copied_state))
+            return
+
+        self.pending_move = copied_state
+        if self.move_due is None:
+            self.move_due = self.now + self.MOVE_INTERVAL
+
+    def advance(self, milliseconds: int) -> None:
+        self.now += milliseconds
+        if self.move_due is not None and self.now >= self.move_due:
+            self.flush_move()
+
+    def replace_client(self) -> None:
+        self.pending_move = None
+        self.move_due = None
+
+
 class UnstableWarningState:
     """Model the UI grace period layered over tunnel instability."""
 
@@ -435,6 +473,40 @@ def main() -> None:
     assert menu_action.sink_focused is True
     assert menu_action.restore_pending_user_gesture is False
 
+    # High-frequency movement must collapse to the most recent independent
+    # state object and send no more than once per interval.
+    mouse = MouseInputState()
+    first_move = {"x": 10, "y": 20, "left": False}
+    mouse.event("mousemove", first_move)
+    first_move["x"] = 999
+    mouse.event("mousemove", {"x": 30, "y": 40, "left": False})
+    assert mouse.sent == []
+    mouse.advance(MouseInputState.MOVE_INTERVAL - 1)
+    assert mouse.sent == []
+    mouse.advance(1)
+    assert mouse.sent == [("mousemove", {"x": 30, "y": 40, "left": False})]
+
+    # Button transitions flush the latest position first and are never delayed.
+    mouse.event("mousemove", {"x": 50, "y": 60, "left": False})
+    mouse.event("mousedown", {"x": 50, "y": 60, "left": True})
+    assert mouse.sent[-2:] == [
+        ("mousemove", {"x": 50, "y": 60, "left": False}),
+        ("mousedown", {"x": 50, "y": 60, "left": True}),
+    ]
+    mouse.event("mousemove", {"x": 80, "y": 90, "left": True})
+    mouse.event("mouseup", {"x": 80, "y": 90, "left": False})
+    assert mouse.sent[-2:] == [
+        ("mousemove", {"x": 80, "y": 90, "left": True}),
+        ("mouseup", {"x": 80, "y": 90, "left": False}),
+    ]
+
+    # A movement queued for an old connection must never reach its replacement.
+    stale_mouse = MouseInputState()
+    stale_mouse.event("mousemove", {"x": 100, "y": 110, "left": False})
+    stale_mouse.replace_client()
+    stale_mouse.advance(MouseInputState.MOVE_INTERVAL)
+    assert stale_mouse.sent == []
+
     # A brief unstable state must recover without flashing a warning.
     brief_stall = UnstableWarningState()
     brief_stall.set_tunnel_state("unstable")
@@ -525,7 +597,7 @@ def main() -> None:
     transfer_guard.advance(UnstableWarningState.AUTO_RECONNECT_DELAY)
     assert transfer_guard.auto_reconnects == 0
 
-    print("输入法、焦点所有权、修饰键、网络提示、自动重连和竞态状态回归测试通过。")
+    print("输入法、鼠标合并、焦点所有权、修饰键、网络提示、自动重连和竞态状态回归测试通过。")
 
 
 if __name__ == "__main__":

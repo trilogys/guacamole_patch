@@ -1,13 +1,13 @@
 {
-  "package_version": "1.6.0-recovery2",
+  "package_version": "1.6.0-recovery3",
   "release_name": "Guacamole Input and Network Recovery",
   "base_repository_commit": "db230461876a0b086f5ab32165a1eaea0dd39481",
   "release_status": "controlled-deployment-candidate",
   "upstream_project": "Apache Guacamole",
   "upstream_version": "1.6.0",
   "upstream_source_sha256": "81f9fd5a7b4377fb0ee295d0d4fec92e9667f2aafaa3d0ed8937f535deabdee4",
-  "patch_sha256": "2ca476a390419888796cc589c16325f8aab8591e81eb04d71451b447eba82f80",
-  "default_image": "ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2",
+  "patch_sha256": "4511b8255f316fc1d8cc4009d1ad4f26e0f7394e4c627070087d5a5581b96b8e",
+  "default_image": "ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3",
   "fallback_image": "guacamole/guacamole:1.6.0",
   "database_migration": false,
   "end_to_end_rdp_validation": false

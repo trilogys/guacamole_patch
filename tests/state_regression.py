@@ -236,8 +236,9 @@ class UnstableWarningState:
     AUTO_RECONNECT_MAX_ATTEMPTS = 2
     AUTO_RECONNECT_RESET_DELAY = 60000
 
-    def __init__(self) -> None:
+    def __init__(self, identifier_type: str = "c") -> None:
         self.now = 0
+        self.identifier_type = identifier_type
         self.hidden = False
         self.tunnel_state = "open"
         self.warning_visible = False
@@ -258,7 +259,6 @@ class UnstableWarningState:
     def set_tunnel_state(self, state: str) -> None:
         self.tunnel_state = state
         if state == "unstable":
-            self.auto_reconnect_due = None
             self.attempt_reset_due = None
             self.schedule_warning()
         else:
@@ -268,8 +268,6 @@ class UnstableWarningState:
                 self.queue_auto_reconnect()
                 if self.auto_reconnect_attempts:
                     self.attempt_reset_due = self.now + self.AUTO_RECONNECT_RESET_DELAY
-            else:
-                self.auto_reconnect_due = None
 
     def set_hidden(self, hidden: bool) -> None:
         self.hidden = hidden
@@ -283,6 +281,7 @@ class UnstableWarningState:
             if self.tunnel_state == "unstable" and not self.hidden:
                 self.warning_visible = True
                 self.reconnect_suggested = True
+                self.queue_auto_reconnect()
 
         if self.auto_reconnect_due is not None and self.now >= self.auto_reconnect_due:
             self.auto_reconnect_due = None
@@ -300,7 +299,7 @@ class UnstableWarningState:
     def can_auto_reconnect(self) -> bool:
         return (
             self.recovery_available()
-            and self.tunnel_state == "open"
+            and self.identifier_type != "g"
             and not self.active_transfer
         )
 
@@ -324,7 +323,65 @@ class UnstableWarningState:
         self.reconnect_suggested = False
 
     def recovery_available(self) -> bool:
-        return self.reconnect_suggested and self.tunnel_state in {"open", "unstable"}
+        return self.reconnect_suggested and self.tunnel_state in {
+            "open", "unstable", "disconnected", "tunnel_error"
+        }
+
+
+class ControlResponseState:
+    """Model recovery when input receives no later display synchronization."""
+
+    RESPONSE_TIMEOUT = 8000
+    MIN_INPUTS = 3
+    MAX_DISPLAY_DELAY = 3000
+
+    def __init__(self) -> None:
+        self.now = 0
+        self.hidden = False
+        self.tunnel_state = "open"
+        self.sync_generation = 0
+        self.initial_sync_generation: int | None = None
+        self.inputs_since_sync = 0
+        self.response_due: int | None = None
+        self.control_unresponsive = False
+        self.reconnect_suggested = False
+
+    def note_input(self) -> None:
+        if self.hidden or self.tunnel_state != "open":
+            return
+        self.inputs_since_sync += 1
+        if self.response_due is None:
+            self.initial_sync_generation = self.sync_generation
+            self.response_due = self.now + self.RESPONSE_TIMEOUT
+
+    def sync(self, display_delay: int = 0, processing_lag: int = 0) -> None:
+        if (
+            display_delay > self.MAX_DISPLAY_DELAY
+            or processing_lag > self.MAX_DISPLAY_DELAY
+        ):
+            return
+        self.sync_generation += 1
+        self.inputs_since_sync = 0
+        self.response_due = None
+        self.initial_sync_generation = None
+        if self.control_unresponsive:
+            self.control_unresponsive = False
+            self.reconnect_suggested = False
+
+    def advance(self, milliseconds: int) -> None:
+        self.now += milliseconds
+        if self.response_due is None or self.now < self.response_due:
+            return
+        self.response_due = None
+        if (
+            self.inputs_since_sync >= self.MIN_INPUTS
+            and self.sync_generation == self.initial_sync_generation
+            and self.tunnel_state == "open"
+            and not self.hidden
+        ):
+            self.control_unresponsive = True
+            self.reconnect_suggested = True
+        self.inputs_since_sync = 0
 
 
 def main() -> None:
@@ -527,8 +584,8 @@ def main() -> None:
     assert sustained_stall.warning_visible is False
     assert sustained_stall.reconnect_suggested is True
     assert sustained_stall.recovery_available() is True
-    sustained_stall.set_tunnel_state("closed")
-    assert sustained_stall.recovery_available() is False
+    sustained_stall.set_tunnel_state("disconnected")
+    assert sustained_stall.recovery_available() is True
     sustained_stall.dismiss_recovery()
     assert sustained_stall.reconnect_suggested is False
 
@@ -548,6 +605,81 @@ def main() -> None:
     background_stall.set_hidden(True)
     assert background_stall.warning_visible is False
     assert background_stall.warning_due is None
+
+    # A tunnel which remains unstable must be rebuilt before the underlying
+    # receive timeout leaves the user with a frozen, uncontrollable canvas.
+    persistent_stall = UnstableWarningState()
+    persistent_stall.set_tunnel_state("unstable")
+    persistent_stall.advance(UnstableWarningState.WARNING_DELAY)
+    assert persistent_stall.auto_reconnect_due is not None
+    persistent_stall.advance(UnstableWarningState.AUTO_RECONNECT_DELAY)
+    assert persistent_stall.auto_reconnects == 1
+
+    # A confirmed tunnel failure that closes while recovery is pending must
+    # retain the pending rebuild instead of requiring a browser refresh.
+    closed_stall = UnstableWarningState()
+    closed_stall.set_tunnel_state("unstable")
+    closed_stall.advance(UnstableWarningState.WARNING_DELAY)
+    closed_stall.set_tunnel_state("tunnel_error")
+    closed_stall.advance(UnstableWarningState.AUTO_RECONNECT_DELAY)
+    assert closed_stall.auto_reconnects == 1
+
+    # Balancing groups can select another backend on reconnect. Keep the
+    # recovery action visible, but never switch those sessions automatically.
+    balancing_group = UnstableWarningState(identifier_type="g")
+    balancing_group.set_tunnel_state("unstable")
+    balancing_group.advance(UnstableWarningState.WARNING_DELAY)
+    balancing_group.advance(UnstableWarningState.AUTO_RECONNECT_DELAY * 2)
+    assert balancing_group.auto_reconnects == 0
+    assert balancing_group.recovery_available() is True
+
+    # Several intentional presses with no later display sync indicate a
+    # wedged downstream control path even while WebSocket pings remain healthy.
+    input_stall = ControlResponseState()
+    for _ in range(ControlResponseState.MIN_INPUTS):
+        input_stall.note_input()
+    input_stall.advance(ControlResponseState.RESPONSE_TIMEOUT)
+    assert input_stall.reconnect_suggested is True
+    input_stall.sync()
+    assert input_stall.reconnect_suggested is False
+
+    # Any remote sync acknowledges progress and cancels the input watchdog.
+    responsive_input = ControlResponseState()
+    for _ in range(ControlResponseState.MIN_INPUTS):
+        responsive_input.note_input()
+    responsive_input.sync()
+    responsive_input.advance(ControlResponseState.RESPONSE_TIMEOUT)
+    assert responsive_input.reconnect_suggested is False
+
+    # Stale syncs from a remote browser which is flooding the display queue do
+    # not prove that current clicks can be processed in a timely manner.
+    delayed_display = ControlResponseState()
+    for _ in range(ControlResponseState.MIN_INPUTS):
+        delayed_display.note_input()
+    delayed_display.sync(display_delay=ControlResponseState.MAX_DISPLAY_DELAY + 1)
+    delayed_display.advance(ControlResponseState.RESPONSE_TIMEOUT)
+    assert delayed_display.reconnect_suggested is True
+
+    delayed_render = ControlResponseState()
+    for _ in range(ControlResponseState.MIN_INPUTS):
+        delayed_render.note_input()
+    delayed_render.sync(processing_lag=ControlResponseState.MAX_DISPLAY_DELAY + 1)
+    delayed_render.advance(ControlResponseState.RESPONSE_TIMEOUT)
+    assert delayed_render.reconnect_suggested is True
+
+    # Fewer than three inert clicks must never rebuild an otherwise idle
+    # session, and background input cannot arm recovery.
+    inert_input = ControlResponseState()
+    for _ in range(ControlResponseState.MIN_INPUTS - 1):
+        inert_input.note_input()
+    inert_input.advance(ControlResponseState.RESPONSE_TIMEOUT)
+    assert inert_input.reconnect_suggested is False
+    hidden_input = ControlResponseState()
+    hidden_input.hidden = True
+    for _ in range(ControlResponseState.MIN_INPUTS):
+        hidden_input.note_input()
+    hidden_input.advance(ControlResponseState.RESPONSE_TIMEOUT)
+    assert hidden_input.reconnect_suggested is False
 
     # A confirmed disruption that recovers queues one bounded reconnect after
     # the initial stable delay.

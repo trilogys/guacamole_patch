@@ -11,7 +11,7 @@
 拉取已经构建好的镜像：
 
 ```bash
-docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
+docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3
 ```
 
 在 Docker Compose 中使用：
@@ -19,7 +19,7 @@ docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
 ```yaml
 services:
   guacamole:
-    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
+    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3
 ```
 
 只更新 Guacamole Web 容器：
@@ -35,8 +35,8 @@ Docker 会复用没有变化的镜像层，后续拉取通常只下载发生变�
 
 ## 镜像标签
 
-- `1.6.0-recovery2`：本补丁包对应的当前具名恢复版本。
-- `1.6.0-recovery1`：保留用于回滚的上一恢复版本。
+- `1.6.0-recovery3`：本补丁包对应的当前具名恢复版本。
+- `1.6.0-recovery2`：保留用于回滚的上一恢复版本。
 - `1.6.0`：当前滚动发布镜像，每次正式构建都会更新这个标签。
 - `main`：由 `main` 分支最新代码构建。
 - `sha-<commit>`：对应特定源码提交的固定标签，适合精确部署和回滚。
@@ -75,13 +75,25 @@ Guacamole 原本在大约 1.5 秒未收到隧道数据后就把连接标记为�
 
 底层不稳定检测和 15 秒接收超时保持不变。真实且持续的网络或服务器故障仍会正常提示并断开连接。
 
-发生过确认的网络异常后，网络数据稳定恢复 5 秒时会自动仅重建受影响的远程连接。短期内第二次异常使用 10 秒退避，连续自动尝试最多两次；稳定运行一分钟后重置尝试次数。
+发生过确认的网络异常后，直连会话会在 5 秒后自动仅重建受影响的远程连接，不再要求隧道必须先恢复。短期内第二次异常使用 10 秒退避，连续自动尝试最多两次；稳定运行一分钟后重置尝试次数。
 
-隧道再次不稳定、存在进行中的文件传输或用户选择“保留当前连接”时，会取消待执行的自动重连。达到自动尝试上限或控制仍然卡顿时仍可手动“重新连接”。Guacamole 登录态、页面地址和未受影响的平铺连接都会保留。
+隧道仍显示正常，但连续三次有意点击后 8 秒内没有及时的远端画面同步时，同样会判断控制链路失效并请求恢复。补丁会使用 Guacamole 自带的画面统计和相对同步时间识别超过 3 秒的网络排队或浏览器渲染积压，旧画面持续到达不会被误判为控制正常。存在进行中的文件传输或用户选择“保留当前连接”时，会取消待执行的自动重连。达到自动尝试上限时仍可手动“重新连接”。Guacamole 登录态、页面地址和未受影响的平铺连接都会保留。
+
+负载均衡连接组重连时可能选择另一台后端，因此只显示手动重连，不会自动切换画面。若必须保持同一台远端主机，应从 Guacamole 中打开具体连接，而不是负载均衡组。
 
 ### 弱网下的鼠标响应
 
 高频鼠标移动会以大约 30 Hz 合并为最新坐标。按下、松开、右键、滚轮和拖拽结束事件会先刷新最后坐标并立即发送，避免点击排在过期移动事件之后。连接被替换时会丢弃旧连接尚未发送的移动。
+
+### 远端浏览器高画面负载
+
+远程 Windows 中打开 Chrome、Edge、视频、动画或滚动复杂网页会产生大量 RDP 画面更新。补丁可以识别严重积压并恢复连接，但不能消除远端主机、网络带宽或 `guacd` 编码能力不足。建议在 Guacamole 的具体 RDP 连接中使用：
+
+- 颜色深度设为 `16`；
+- 不启用“强制无损”；
+- 不启用壁纸、主题、字体平滑、拖动时显示窗口内容、桌面合成和菜单动画；
+- 保持位图、离屏和字形缓存启用，即不要勾选对应的“禁用缓存”；
+- 首次排查时把远程分辨率降到 `1280x720` 或 `1600x900`，DPI 设为 `96`。
 
 ## GitHub Actions 构建
 
@@ -91,7 +103,7 @@ Guacamole 原本在大约 1.5 秒未收到隧道数据后就把连接标记为�
 
 ```text
 ghcr.io/trilogys/guacamole_patch:1.6.0
-ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
+ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3
 ghcr.io/trilogys/guacamole_patch:main
 ghcr.io/trilogys/guacamole_patch:sha-<commit>
 ```
@@ -116,7 +128,7 @@ mktemp
 git clone https://github.com/trilogys/guacamole_patch.git
 cd guacamole_patch
 
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3" \
 bash ./build.sh
 ```
 
@@ -124,7 +136,7 @@ bash ./build.sh
 
 ```bash
 MAVEN_ARGUMENTS="-T 1C -Dmaven.test.skip=true" \
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3" \
 bash ./build.sh
 ```
 
@@ -133,14 +145,14 @@ bash ./build.sh
 ## 验证镜像
 
 ```bash
-docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2 \
+docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3 \
   --format '{{index .Config.Labels "io.guacamole.recovery.patch-sha256"}}'
 ```
 
 预期补丁 SHA-256：
 
 ```text
-2ca476a390419888796cc589c16325f8aab8591e81eb04d71451b447eba82f80
+4511b8255f316fc1d8cc4009d1ad4f26e0f7394e4c627070087d5a5581b96b8e
 ```
 
 ## 验收测试

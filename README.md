@@ -11,7 +11,7 @@ This repository is not an official Apache Software Foundation release.
 Pull the published image:
 
 ```bash
-docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
+docker pull ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3
 ```
 
 Use it in Docker Compose:
@@ -19,7 +19,7 @@ Use it in Docker Compose:
 ```yaml
 services:
   guacamole:
-    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
+    image: ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3
 ```
 
 Update only the Guacamole web container:
@@ -35,8 +35,8 @@ Docker reuses unchanged layers, so later pulls normally download only changed la
 
 ## Published image tags
 
-- `1.6.0-recovery2`: current named recovery release documented by this package.
-- `1.6.0-recovery1`: previous recovery release retained for rollback.
+- `1.6.0-recovery3`: current named recovery release documented by this package.
+- `1.6.0-recovery2`: previous recovery release retained for rollback.
 - `1.6.0`: current moving release image; this tag is updated on each release build.
 - `main`: latest image built from the `main` branch.
 - `sha-<commit>`: immutable tag for a specific source commit.
@@ -75,13 +75,25 @@ Guacamole normally marks a tunnel unstable after roughly 1.5 seconds without inb
 
 The underlying instability detector and 15-second receive timeout are unchanged. Sustained network or server failures are still reported and disconnected normally.
 
-After a confirmed unstable period, recovery automatically rebuilds only the affected remote connection after network traffic remains stable for five seconds. A second consecutive attempt waits ten seconds, and recovery stops after two attempts to prevent loops. One stable minute resets the retry budget.
+After a confirmed unstable period, recovery automatically rebuilds only the affected direct connection after five seconds, without requiring the tunnel to recover first. A second consecutive attempt waits ten seconds, and recovery stops after two attempts to prevent loops. One stable minute resets the retry budget.
 
-Automatic reconnect is cancelled if the tunnel becomes unstable again, a file transfer is active, or **Keep current session** is selected. Manual **Reconnect** remains available when controls are still delayed or the automatic retry limit has been reached. The Guacamole login, page route, and unaffected tiled connections are preserved.
+If the tunnel remains open but three intentional mouse presses receive no timely remote display sync for eight seconds, recovery also treats the downstream control path as wedged. Guacamole's display statistics and relative sync timing are used to identify network queueing or browser rendering delays above three seconds, so a stream of stale frames does not mask the failure. Automatic reconnect is cancelled while a file transfer is active or if **Keep current session** is selected. Manual **Reconnect** remains available after the retry limit. The Guacamole login, page route, and unaffected tiled connections are preserved.
+
+Reconnecting a balancing group may select another backend, so group recovery remains manual and never switches the displayed machine automatically. Use a specific Guacamole connection instead of a balancing group when the same remote host must be preserved.
 
 ### Mouse response under weak networks
 
 High-frequency mouse movement is coalesced to the latest position at roughly 30 Hz. Button presses, releases, right-clicks, wheel events, and drag endpoints flush the latest position first and are sent immediately, preventing clicks from waiting behind stale movement. Pending movement is discarded when the connection is replaced.
+
+### High display load from a remote browser
+
+Chrome, Edge, video, animation, and complex page scrolling inside remote Windows generate substantial RDP display traffic. The patch detects severe backlog and recovers the connection, but cannot remove bottlenecks in the remote host, network, or `guacd` encoder. For the specific Guacamole RDP connection, prefer:
+
+- `16`-bit color depth;
+- force-lossless disabled;
+- wallpaper, theming, font smoothing, full-window drag, desktop composition, and menu animations disabled;
+- bitmap, offscreen, and glyph caching enabled by leaving their "disable" options unchecked;
+- `1280x720` or `1600x900` with `96` DPI during initial troubleshooting.
 
 ## GitHub Actions build
 
@@ -91,7 +103,7 @@ A successful build publishes:
 
 ```text
 ghcr.io/trilogys/guacamole_patch:1.6.0
-ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2
+ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3
 ghcr.io/trilogys/guacamole_patch:main
 ghcr.io/trilogys/guacamole_patch:sha-<commit>
 ```
@@ -116,7 +128,7 @@ Clone and build:
 git clone https://github.com/trilogys/guacamole_patch.git
 cd guacamole_patch
 
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3" \
 bash ./build.sh
 ```
 
@@ -124,7 +136,7 @@ For a faster troubleshooting build:
 
 ```bash
 MAVEN_ARGUMENTS="-T 1C -Dmaven.test.skip=true" \
-IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2" \
+IMAGE_NAME="ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3" \
 bash ./build.sh
 ```
 
@@ -133,14 +145,14 @@ bash ./build.sh
 ## Verify the image
 
 ```bash
-docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery2 \
+docker image inspect ghcr.io/trilogys/guacamole_patch:1.6.0-recovery3 \
   --format '{{index .Config.Labels "io.guacamole.recovery.patch-sha256"}}'
 ```
 
 Expected patch SHA-256:
 
 ```text
-2ca476a390419888796cc589c16325f8aab8591e81eb04d71451b447eba82f80
+4511b8255f316fc1d8cc4009d1ad4f26e0f7394e4c627070087d5a5581b96b8e
 ```
 
 ## Acceptance testing

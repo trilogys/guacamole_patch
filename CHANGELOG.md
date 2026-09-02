@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.0-recovery3
+
+- Rebuild a confirmed, persistently unstable direct connection without waiting for the tunnel to recover or the browser page to be refreshed.
+- Detect a wedged or backlogged downstream control path when three intentional mouse presses receive no timely remote display sync for eight seconds.
+- Use Guacamole display statistics and relative sync timestamp drift to reject syncs delayed by more than three seconds as evidence of responsive control.
+- Preserve pending recovery if the tunnel closes while the rebuild timer is active.
+- Keep balancing-group recovery manual because reconnecting a group may select a different backend and display another session.
+- Retain the recovery2 mouse coalescing and all existing keyboard/IME fixes.
+
 ## 1.6.0-recovery2
 
 - Coalesce high-frequency physical and emulated mouse movement to the latest state at roughly 30 Hz.
